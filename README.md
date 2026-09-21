@@ -91,11 +91,36 @@ Result shape: (1000, 1000)
 Execution time: 0.952 ms
 ```
 
+### Evaluator
+
+The evaluator compares a candidate with a reference JAX function on one tuple
+of array inputs. Both functions must be pure and return a single finite
+floating-point array with the same shape and dtype. Values are compared using
+`atol + rtol * abs(reference)`, with defaults of `rtol=1e-5` and `atol=1e-6`.
+Tolerances must be finite, nonnegative scalars; `repeats` must be a positive integer.
+
+Successful evaluations report median execution times in milliseconds and an
+observed speedup. Compilation, input placement, and warm-up are excluded from
+timing. Candidate failures report a `failure_stage` (`compile`, `execute`,
+`correctness`, or `benchmark`) and a readable `message`, without timings or a
+speedup. Invalid arguments and reference-function errors raise exceptions.
+
+Run the demo and tests from the repository root with the environment activated:
+
+```bash
+python -m src.optimization.demo_evaluator
+python -m unittest discover -s tests -v
+```
+
+The demo uses minimal inputs. A single evaluation does not establish general
+correctness or a repeatable speedup, and peak memory is not measured. Use the
+target GPU for GPU performance comparisons.
+
 ## Contact
 John Christensen - johnchristensen@outlook.com
 
 
-Joel Maharena -    
+Joel Maharena - joel.maharena@gmail.com 
 
 
 Lidya Nasser -        
