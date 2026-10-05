@@ -67,34 +67,55 @@ pip install -r requirements.txt
 
 ## Pipeline
 
-### Current small test
-This is a small test currently to test that jax works
+### Compiler interface
+
+`compile_program(program, inputs: tuple) -> CompilationResult` is the shared
+compilation interface used by the evaluator and compiler demo. It accepts a
+pure JAX function and a tuple of positional array inputs, lowers and compiles
+once per call, and returns:
+
+| Field | Contents |
+| --- | --- |
+| `executable` | A compiled callable specialized to the input shapes and dtypes |
+| `stablehlo` | The lowered StableHLO representation as text |
+| `optimized_hlo` | The compiled HLO representation as text, or `None` when unavailable |
+
+The wrapper uses JAX's normal specialization and device behavior. Callers own
+input placement, execution, synchronization, and benchmarking. Compilation and
+unexpected inspection errors propagate unchanged. Compiler text is intended
+for inspection, not executable serialization; there is no custom cache.
+
+```python
+import jax
+import jax.numpy as jnp
+
+from src.compiler.compile import compile_program, simple_program
+
+inputs = jax.block_until_ready((
+    jnp.ones((32, 32), dtype=jnp.float32),
+    jnp.ones((32, 32), dtype=jnp.float32),
+))
+compilation = compile_program(simple_program, inputs)
+result = jax.block_until_ready(compilation.executable(*inputs))
+```
+
+Run the compiler demo from the repository root:
+
 ```bash
-python src/compiler/compile.py 
+python src/compiler/compile.py
 ```
 
-It should output something like this in the terminal
-```text
-=== Lowered program ===
-module @jit_simple_program attributes {mhlo.num_partitions = 1 : i32, mhlo.num_replicas = 1 : i32} {
-  func.func public @main(%arg0: tensor<1000x1000xf32>, %arg1: tensor<1000x1000xf32>) -> (tensor<1000x1000xf32> {jax.result_info = "result"}) {
-    %0 = stablehlo.sine %arg0 : tensor<1000x1000xf32>
-    %cst = stablehlo.constant dense<2.000000e+00> : tensor<f32>
-    %1 = stablehlo.broadcast_in_dim %cst, dims = [] : (tensor<f32>) -> tensor<1000x1000xf32>
-    %2 = stablehlo.multiply %arg1, %1 : tensor<1000x1000xf32>
-    %3 = stablehlo.add %0, %2 : tensor<1000x1000xf32>
-    return %3 : tensor<1000x1000xf32>
-  }
-}
-
-Result shape: (1000, 1000)
-Execution time: 0.952 ms
-```
+It prints StableHLO, optimized HLO (or an availability message), the result
+shape, and execution time after warm-up. Representation text and timings vary
+with the backend and software versions.
 
 ### Evaluator
 
-The evaluator compares a candidate with a reference JAX function on one tuple
-of array inputs. Both functions must be pure and return a single finite
+The evaluator compiles both reference and candidate through `compile_program`,
+then compares them on one tuple of array inputs. It owns input placement,
+correctness checks, execution timing, and failure classification; compiler
+representations remain in `CompilationResult`, separate from evaluation metrics.
+Both functions must be pure and return a single finite
 floating-point array with the same shape and dtype. Values are compared using
 `atol + rtol * abs(reference)`, with defaults of `rtol=1e-5` and `atol=1e-6`.
 Tolerances must be finite, nonnegative scalars; `repeats` must be a positive integer.

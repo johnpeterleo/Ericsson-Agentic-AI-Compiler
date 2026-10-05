@@ -8,6 +8,7 @@ from unittest.mock import Mock, patch
 import jax
 import numpy as np
 
+from src.compiler.compile import CompilationResult, compile_program
 from src.optimization import demo_evaluator
 from src.optimization.evaluator import EvaluationResult, evaluate, measure_latency, outputs_match
 
@@ -98,6 +99,31 @@ class EvaluatorTests(unittest.TestCase):
         self.assertIsNone(result.failure_stage)
         self.assertIsNone(result.message)
 
+    def test_both_programs_use_shared_compilation_before_benchmarking(self):
+        def reference(x):
+            return x + 1
+
+        def candidate(x):
+            return 1 + x
+
+        with patch("src.optimization.evaluator.compile_program", wraps=compile_program) as compiler:
+            def measure(executable, inputs, *, repeats):
+                self.assertEqual(compiler.call_count, 2)
+                return 1.0
+
+            with patch("src.optimization.evaluator.measure_latency", side_effect=measure) as timer:
+                result = evaluate(reference, candidate, self.inputs)
+
+        self.assertTrue(result.correct)
+        self.assertEqual(compiler.call_count, 2)
+        self.assertEqual(timer.call_count, 2)
+        reference_call, candidate_call = compiler.call_args_list
+        self.assertIs(reference_call.args[0], reference)
+        self.assertIs(candidate_call.args[0], candidate)
+        device_inputs = reference_call.args[1]
+        self.assertIs(device_inputs, candidate_call.args[1])
+        self.assertTrue(all(isinstance(value, jax.Array) for value in device_inputs))
+
     def test_correctness_diagnostics_report_first_mismatch(self):
         identity = lambda x: x
         cases = [
@@ -129,11 +155,12 @@ class EvaluatorTests(unittest.TestCase):
         result = evaluate(lambda x: x, candidate, self.inputs)
         self.assertFailure(result, "compile", "ValueError", "candidate cannot be lowered")
 
-    def test_candidate_backend_compilation_error_is_reported(self):
-        reference_jit = jax.jit(lambda x: x)
-        candidate_jit = Mock()
-        candidate_jit.lower.return_value.compile.side_effect = RuntimeError("compile failed")
-        with patch("src.optimization.evaluator.jax.jit", side_effect=[reference_jit, candidate_jit]):
+    def test_candidate_compiler_error_is_reported(self):
+        reference = compile_program(lambda x: x, self.inputs)
+        with patch(
+            "src.optimization.evaluator.compile_program",
+            side_effect=[reference, RuntimeError("compile failed")],
+        ):
             result = evaluate(lambda x: x, lambda x: x, self.inputs)
         self.assertFailure(result, "compile", "RuntimeError", "compile failed")
 
@@ -148,12 +175,11 @@ class EvaluatorTests(unittest.TestCase):
         ]
         for executable, message in cases:
             with self.subTest(message=message):
-                reference_jit = jax.jit(lambda x: x)
-                candidate_jit = Mock()
-                candidate_jit.lower.return_value.compile.return_value = executable
+                reference = compile_program(lambda x: x, self.inputs)
+                candidate = CompilationResult(executable, stablehlo="", optimized_hlo=None)
                 with patch(
-                    "src.optimization.evaluator.jax.jit",
-                    side_effect=[reference_jit, candidate_jit],
+                    "src.optimization.evaluator.compile_program",
+                    side_effect=[reference, candidate],
                 ):
                     with patch("src.optimization.evaluator.measure_latency") as timing:
                         result = evaluate(lambda x: x, lambda x: x, self.inputs)
@@ -176,10 +202,10 @@ class EvaluatorTests(unittest.TestCase):
         ]
         for settings in invalid_settings:
             with self.subTest(settings=settings):
-                with patch("src.optimization.evaluator.jax.jit") as jit:
+                with patch("src.optimization.evaluator.compile_program") as compiler:
                     with self.assertRaises((ValueError, TypeError)):
                         evaluate(lambda x: x, lambda x: x, self.inputs, **settings)
-                jit.assert_not_called()
+                compiler.assert_not_called()
 
     def test_reference_compilation_error_propagates(self):
         def reference(x):
@@ -189,11 +215,12 @@ class EvaluatorTests(unittest.TestCase):
             evaluate(reference, lambda x: x, self.inputs)
 
     def test_reference_execution_error_propagates(self):
-        reference_jit = Mock()
-        reference_jit.lower.return_value.compile.return_value.side_effect = RuntimeError(
-            "reference execution failed"
+        reference = CompilationResult(
+            executable=Mock(side_effect=RuntimeError("reference execution failed")),
+            stablehlo="",
+            optimized_hlo=None,
         )
-        with patch("src.optimization.evaluator.jax.jit", return_value=reference_jit):
+        with patch("src.optimization.evaluator.compile_program", return_value=reference):
             with self.assertRaisesRegex(RuntimeError, "reference execution failed"):
                 evaluate(lambda x: x, lambda x: x, self.inputs)
 

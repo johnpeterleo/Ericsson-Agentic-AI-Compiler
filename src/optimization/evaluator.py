@@ -14,6 +14,8 @@ from typing import Literal
 import jax
 import numpy as np
 
+from src.compiler.compile import compile_program
+
 
 @dataclass
 class EvaluationResult:
@@ -104,11 +106,11 @@ def evaluate(reference_fn, candidate_fn, inputs, *, repeats=20, rtol=1e-5, atol=
 
     # Finish input transfers before starting any execution measurements.
     device_inputs = jax.block_until_ready(jax.device_put(inputs))
-    reference = jax.jit(reference_fn).lower(*device_inputs).compile()
+    reference = compile_program(reference_fn, device_inputs).executable
     expected = jax.block_until_ready(reference(*device_inputs))
 
     try:
-        candidate = jax.jit(candidate_fn).lower(*device_inputs).compile()
+        candidate = compile_program(candidate_fn, device_inputs).executable
     except Exception as error:
         return EvaluationResult(
             correct=False, failure_stage="compile",
