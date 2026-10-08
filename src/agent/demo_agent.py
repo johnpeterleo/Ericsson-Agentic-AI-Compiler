@@ -3,7 +3,7 @@
 import numpy as np
 
 from src.agent.agent import AgentConfig, DemoPolicy, OptimizationAgent, format_step_summary
-from src.agent.tools import AgentToolkit, StubProfiler
+from src.agent.tools import AgentToolkit, JaxProfiler
 from src.compiler.compile import simple_program
 import jax.numpy as jnp
 
@@ -19,7 +19,7 @@ def main():
 
     policy = DemoPolicy(candidates=[candidate_v1])
     agent = OptimizationAgent(
-        toolkit=AgentToolkit(profiler=StubProfiler()),
+        toolkit=AgentToolkit(profiler=JaxProfiler(repeats=5)),
         policy=policy,
         config=AgentConfig(max_iterations=3, benchmark_repeats=5),
     )

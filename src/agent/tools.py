@@ -5,6 +5,7 @@ import jax
 
 from src.agent.types import HLOSnapshot, InputTuple, JaxFn, ProfileReport
 from src.optimization.evaluator import EvaluationResult, evaluate, measure_latency
+from src.profiling.profiler import profile_function
 
 
 class Profiler(Protocol):
@@ -15,7 +16,7 @@ class Profiler(Protocol):
 
 
 class StubProfiler:
-    # Placeholder until src/profiling/ exists
+    """Small compatibility profiler used only when explicitly requested."""
 
     def profile(self, fn: JaxFn, inputs: InputTuple) -> ProfileReport:
         backend = jax.default_backend()
@@ -32,6 +33,38 @@ class StubProfiler:
             backend=backend,
             total_ms=total_ms,
             raw={"source": "stub_profiler_median_ms", "repeats": 5},
+        )
+
+
+@dataclass(frozen=True)
+class JaxProfiler:
+    """Adapt the structured profiler for use in the optimization agent.
+
+    The underlying profiler compiles, warms up, synchronizes device execution,
+    and records repeated samples.  This makes the value shown to the agent a
+    real end-to-end device latency rather than asynchronous dispatch time.
+    """
+
+    repeats: int = 20
+
+    def profile(self, fn: JaxFn, inputs: InputTuple) -> ProfileReport:
+        result = profile_function(fn, inputs, repeats=self.repeats)
+        return ProfileReport(
+            backend=result.backend,
+            total_ms=result.median_ms,
+            raw={
+                "source": "profile_function",
+                "repeats": self.repeats,
+                "samples_ms": result.samples_ms,
+                "mean_ms": result.mean_ms,
+                "min_ms": result.min_ms,
+                "max_ms": result.max_ms,
+                "stddev_ms": result.stddev_ms,
+                "compile_ms": result.compile_ms,
+                "device_platform": result.device_platform,
+                "device_kind": result.device_kind,
+                "device_id": result.device_id,
+            },
         )
 
 

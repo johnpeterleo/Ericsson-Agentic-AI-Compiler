@@ -12,7 +12,7 @@ from typing import Protocol, Sequence
 
 import jax
 
-from src.agent.tools import AgentToolkit, StubProfiler
+from src.agent.tools import AgentToolkit, JaxProfiler, Profiler
 from src.agent.types import (
     AgentContext,
     AgentRunResult,
@@ -137,11 +137,11 @@ class OptimizationAgent:
 def default_agent(
     policy: OptimizationPolicy | None = None,
     *,
-    profiler: StubProfiler | None = None,
+    profiler: Profiler | None = None,
     config: AgentConfig | None = None,
 ) -> OptimizationAgent:
-    """Factory with stub profiler and optional demo policy."""
-    toolkit = AgentToolkit(profiler=profiler or StubProfiler())
+    """Factory with real structured profiling and an optional demo policy."""
+    toolkit = AgentToolkit(profiler=profiler or JaxProfiler())
     return OptimizationAgent(toolkit=toolkit, policy=policy or DemoPolicy(), config=config)
 
 
