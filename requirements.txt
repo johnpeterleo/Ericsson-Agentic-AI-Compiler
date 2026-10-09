@@ -1,2 +1,4 @@
 jax
 numpy
+google-genai
+python-dotenv

@@ -28,7 +28,7 @@ class AgentConfig:
 
 
 class DemoPolicy:
-    """To be replaced with an LLM policy that reads `prompts.SYSTEM_PROMPT` and calls tools."""
+    """Scripted fallback when no LLM API key is configured (see ``llm_policy``)."""
 
     def __init__(self, candidates: Sequence[JaxFn] | None = None):
         self._candidates = list(candidates or [])
@@ -119,7 +119,12 @@ def default_agent(
     cfg = config or AgentConfig()
     active_profiler = profiler or JaxProfiler(repeats=cfg.benchmark_repeats)
     toolkit = AgentToolkit(profiler=active_profiler, profile_repeats=cfg.benchmark_repeats)
-    return OptimizationAgent(toolkit=toolkit, policy=policy or DemoPolicy(), config=cfg)
+    if policy is None:
+        from src.agent.llm_policy import create_default_policy, load_project_env
+
+        load_project_env()
+        policy = create_default_policy()
+    return OptimizationAgent(toolkit=toolkit, policy=policy, config=cfg)
 
 
 def format_step_summary(step: OptimizationStep) -> str:

@@ -1,10 +1,10 @@
-#Shared data structures for the optimization agent
-
+# Shared data structures for the optimization agent
 from __future__ import annotations
 from dataclasses import dataclass, field
-from typing import Any, Callable, Literal, Mapping, Sequence
+from typing import Any, Callable, Literal, Mapping
 import numpy as np
 from src.optimization.evaluator import EvaluationResult
+
 JaxFn = Callable[..., Any]
 InputTuple = tuple[np.ndarray, ...]
 
@@ -12,7 +12,6 @@ InputTuple = tuple[np.ndarray, ...]
 @dataclass(frozen=True)
 class HLOSnapshot:
     """Compiler IR snapshots from ``src.compiler.compile.compile_program``."""
-
     text: str  # StableHLO (pre-optimization lowering)
     backend: str
     optimized_hlo: str | None = None  # post-XLA optimized HLO when available
@@ -21,7 +20,6 @@ class HLOSnapshot:
 @dataclass(frozen=True)
 class ProfileReport:
     """Agent-facing view of ``src.profiling.profiler.ProfileResult``."""
-
     backend: str
     total_ms: float | None = None
     kernel_stats: tuple[Mapping[str, Any], ...] = ()
@@ -41,7 +39,6 @@ class ProfileReport:
 
 @dataclass
 class RewriteProposal:
-    #What the agent (LLM or human) suggests for the next experiment
     rationale: str
     candidate_fn: JaxFn | None = None
     stop: bool = False
@@ -50,7 +47,6 @@ class RewriteProposal:
 
 @dataclass
 class OptimizationStep:
-    #Record of one observe -> propose -> measure iteration.
     index: int
     proposal: RewriteProposal
     evaluation: EvaluationResult | None = None
@@ -61,9 +57,7 @@ class OptimizationStep:
 
 @dataclass
 class AgentContext:
-    #Everything the policy sees when choosing the next action
-
-    reference_fn: JaxFn  #the Jax function to improve
+    reference_fn: JaxFn
     inputs: InputTuple
     backend: str
     baseline_hlo: HLOSnapshot
