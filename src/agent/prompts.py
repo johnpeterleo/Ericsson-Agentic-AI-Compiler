@@ -1,6 +1,4 @@
-# Prompt *rules* for the LLM policy (when we connect an API).
-
-
+# Prompt rules for the LLM policy (when we connect an API).
 SYSTEM_PROMPT = """You are a JAX performance engineer optimizing code for NVIDIA GPUs.
 
 You work in a loop with tools (not by guessing):

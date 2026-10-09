@@ -1,15 +1,11 @@
 """Agent tools wired to compiler, profiler, and evaluator modules."""
-
 from __future__ import annotations
-
 from dataclasses import dataclass
 from typing import Protocol
-
 import jax
-
 from src.agent.types import HLOSnapshot, InputTuple, JaxFn, ProfileReport
 from src.compiler.compile import compile_program
-from src.optimization.evaluator import EvaluationResult, evaluate
+from src.optimization.evaluator import EvaluationResult, evaluate, measure_latency
 from src.profiling.profiler import ProfileResult, profile_function
 
 
@@ -18,33 +14,37 @@ class Profiler(Protocol):
         ...
 
 
-def profile_result_to_report(result: ProfileResult) -> ProfileReport:
-    """Map profiler module output into agent ``ProfileReport``."""
-    return ProfileReport(
-        backend=result.backend,
-        total_ms=result.median_ms,
-        raw={
-            "median_ms": result.median_ms,
-            "mean_ms": result.mean_ms,
-            "min_ms": result.min_ms,
-            "max_ms": result.max_ms,
-            "stddev_ms": result.stddev_ms,
-            "compile_ms": result.compile_ms,
-            "device_platform": result.device_platform,
-            "device_kind": result.device_kind,
-            "device_id": result.device_id,
-            "samples_ms": result.samples_ms,
-            "stablehlo_text": result.stablehlo_text,
-        },
-    )
+def profile_result_to_report(
+    result: ProfileResult,
+    *,
+    source: str = "profile_function",
+    repeats: int | None = None,
+) -> ProfileReport:
+    """Map ``ProfileResult`` into agent ``ProfileReport``."""
+    raw = {
+        "source": source,
+        "median_ms": result.median_ms,
+        "mean_ms": result.mean_ms,
+        "min_ms": result.min_ms,
+        "max_ms": result.max_ms,
+        "stddev_ms": result.stddev_ms,
+        "compile_ms": result.compile_ms,
+        "device_platform": result.device_platform,
+        "device_kind": result.device_kind,
+        "device_id": result.device_id,
+        "samples_ms": result.samples_ms,
+        "stablehlo_text": result.stablehlo_text,
+    }
+    if repeats is not None:
+        raw["repeats"] = repeats
+    return ProfileReport(backend=result.backend, total_ms=result.median_ms, raw=raw)
 
 
-class JAXProfiler:
-    """Adapter around ``src.profiling.profiler.profile_function``."""
-
-    def __init__(self, *, repeats: int = 20, capture_stablehlo: bool = False):
-        self.repeats = repeats
-        self.capture_stablehlo = capture_stablehlo
+@dataclass(frozen=True)
+class JaxProfiler:
+    """Adapter around ``src.profiling.profiler.profile_function`` for the agent loop."""
+    repeats: int = 20
+    capture_stablehlo: bool = False
 
     def profile(self, fn: JaxFn, inputs: InputTuple) -> ProfileReport:
         result = profile_function(
@@ -53,18 +53,30 @@ class JAXProfiler:
             repeats=self.repeats,
             capture_stablehlo=self.capture_stablehlo,
         )
-        return profile_result_to_report(result)
+        return profile_result_to_report(result, repeats=self.repeats)
 
 
 class StubProfiler:
-    """Minimal profiler for tests; prefer ``JAXProfiler`` in real runs."""
-
+    """Fallback profiler using evaluator timing only (tests or explicit opt-in)."""
     def __init__(self, *, repeats: int = 5):
         self.repeats = repeats
 
     def profile(self, fn: JaxFn, inputs: InputTuple) -> ProfileReport:
-        wrapped = JAXProfiler(repeats=self.repeats)
-        return wrapped.profile(fn, inputs)
+        backend = jax.default_backend()
+        device_inputs = jax.block_until_ready(jax.device_put(inputs))
+        compiled = jax.jit(fn).lower(*device_inputs).compile()
+        try:
+            total_ms = measure_latency(compiled, device_inputs, repeats=self.repeats)
+        except Exception as error:
+            return ProfileReport(
+                backend=backend,
+                raw={"error": f"{type(error).__name__}: {error}", "source": "stub_profiler"},
+            )
+        return ProfileReport(
+            backend=backend,
+            total_ms=total_ms,
+            raw={"source": "stub_profiler_median_ms", "repeats": self.repeats},
+        )
 
 
 def lower_to_hlo_text(fn: JaxFn, inputs: InputTuple) -> HLOSnapshot:
