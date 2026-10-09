@@ -1,58 +1,101 @@
+"""Agent tools wired to compiler, profiler, and evaluator modules."""
+
 from __future__ import annotations
+
 from dataclasses import dataclass
 from typing import Protocol
+
 import jax
 
 from src.agent.types import HLOSnapshot, InputTuple, JaxFn, ProfileReport
-from src.optimization.evaluator import EvaluationResult, evaluate, measure_latency
+from src.compiler.compile import compile_program
+from src.optimization.evaluator import EvaluationResult, evaluate
+from src.profiling.profiler import ProfileResult, profile_function
 
 
 class Profiler(Protocol):
-    # To be replaced StubProfiler when the real module exists
-
     def profile(self, fn: JaxFn, inputs: InputTuple) -> ProfileReport:
         ...
 
 
-class StubProfiler:
-    # Placeholder until src/profiling/ exists
+def profile_result_to_report(result: ProfileResult) -> ProfileReport:
+    """Map profiler module output into agent ``ProfileReport``."""
+    return ProfileReport(
+        backend=result.backend,
+        total_ms=result.median_ms,
+        raw={
+            "median_ms": result.median_ms,
+            "mean_ms": result.mean_ms,
+            "min_ms": result.min_ms,
+            "max_ms": result.max_ms,
+            "stddev_ms": result.stddev_ms,
+            "compile_ms": result.compile_ms,
+            "device_platform": result.device_platform,
+            "device_kind": result.device_kind,
+            "device_id": result.device_id,
+            "samples_ms": result.samples_ms,
+            "stablehlo_text": result.stablehlo_text,
+        },
+    )
+
+
+class JAXProfiler:
+    """Adapter around ``src.profiling.profiler.profile_function``."""
+
+    def __init__(self, *, repeats: int = 20, capture_stablehlo: bool = False):
+        self.repeats = repeats
+        self.capture_stablehlo = capture_stablehlo
 
     def profile(self, fn: JaxFn, inputs: InputTuple) -> ProfileReport:
-        backend = jax.default_backend()
-        device_inputs = jax.block_until_ready(jax.device_put(inputs))
-        compiled = jax.jit(fn).lower(*device_inputs).compile()
-        try:
-            total_ms = measure_latency(compiled, device_inputs, repeats=5)
-        except Exception as error:
-            return ProfileReport(
-                backend=backend,
-                raw={"error": f"{type(error).__name__}: {error}"},
-            )
-        return ProfileReport(
-            backend=backend,
-            total_ms=total_ms,
-            raw={"source": "stub_profiler_median_ms", "repeats": 5},
+        result = profile_function(
+            fn,
+            inputs,
+            repeats=self.repeats,
+            capture_stablehlo=self.capture_stablehlo,
         )
+        return profile_result_to_report(result)
+
+
+class StubProfiler:
+    """Minimal profiler for tests; prefer ``JAXProfiler`` in real runs."""
+
+    def __init__(self, *, repeats: int = 5):
+        self.repeats = repeats
+
+    def profile(self, fn: JaxFn, inputs: InputTuple) -> ProfileReport:
+        wrapped = JAXProfiler(repeats=self.repeats)
+        return wrapped.profile(fn, inputs)
 
 
 def lower_to_hlo_text(fn: JaxFn, inputs: InputTuple) -> HLOSnapshot:
-    # Lower a JAX function and return StableHLO/HLO text (compiler IR)
+    """Lower via ``src.compiler.compile.compile_program``."""
     backend = jax.default_backend()
     device_inputs = jax.block_until_ready(jax.device_put(inputs))
-    lowered = jax.jit(fn).lower(*device_inputs)
-    return HLOSnapshot(text=lowered.as_text(), backend=backend)
+    compilation = compile_program(fn, device_inputs)
+    return HLOSnapshot(
+        text=compilation.stablehlo,
+        backend=backend,
+        optimized_hlo=compilation.optimized_hlo,
+    )
 
-# To be adjusted when the evaluator is written
-def evaluate_candidate(reference_fn: JaxFn, candidate_fn: JaxFn, inputs: InputTuple, *, repeats: int = 10, rtol: float = 1e-5, atol: float = 1e-6) -> EvaluationResult:
-    # Correctness + timing vs reference 
+
+def evaluate_candidate(
+    reference_fn: JaxFn,
+    candidate_fn: JaxFn,
+    inputs: InputTuple,
+    *,
+    repeats: int = 20,
+    rtol: float = 1e-5,
+    atol: float = 1e-6,
+) -> EvaluationResult:
+    """Correctness + timing vs reference (``src.optimization.evaluator``)."""
     return evaluate(reference_fn, candidate_fn, inputs, repeats=repeats, rtol=rtol, atol=atol)
 
 
 @dataclass
 class AgentToolkit:
-    # Bundle of tools passed into the agent loop 
-
     profiler: Profiler
+    profile_repeats: int = 20
 
     def inspect_compilation(self, fn: JaxFn, inputs: InputTuple) -> HLOSnapshot:
         return lower_to_hlo_text(fn, inputs)
@@ -60,5 +103,17 @@ class AgentToolkit:
     def inspect_profile(self, fn: JaxFn, inputs: InputTuple) -> ProfileReport:
         return self.profiler.profile(fn, inputs)
 
-    def measure_against_reference(self, reference_fn: JaxFn, candidate_fn: JaxFn, inputs: InputTuple, *, repeats: int = 10) -> EvaluationResult:
-        return evaluate_candidate(reference_fn, candidate_fn, inputs, repeats=repeats)
+    def measure_against_reference(
+        self,
+        reference_fn: JaxFn,
+        candidate_fn: JaxFn,
+        inputs: InputTuple,
+        *,
+        repeats: int | None = None,
+    ) -> EvaluationResult:
+        return evaluate_candidate(
+            reference_fn,
+            candidate_fn,
+            inputs,
+            repeats=repeats if repeats is not None else self.profile_repeats,
+        )

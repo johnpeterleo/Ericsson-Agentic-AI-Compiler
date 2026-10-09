@@ -11,16 +11,16 @@ InputTuple = tuple[np.ndarray, ...]
 
 @dataclass(frozen=True)
 class HLOSnapshot:
-    # Textual StableHLO/HLO from JAX lowering 
-    text: str
+    """Compiler IR snapshots from ``src.compiler.compile.compile_program``."""
+
+    text: str  # StableHLO (pre-optimization lowering)
     backend: str
+    optimized_hlo: str | None = None  # post-XLA optimized HLO when available
 
 
 @dataclass(frozen=True)
 class ProfileReport:
-    #Runtime profile for one program on fixed inputs
-    # Fields are intentionally open-ended until the profiler API stabilizes.
-   
+    """Agent-facing view of ``src.profiling.profiler.ProfileResult``."""
 
     backend: str
     total_ms: float | None = None
@@ -28,16 +28,15 @@ class ProfileReport:
     raw: Mapping[str, Any] = field(default_factory=dict)
 
     def summary(self) -> str:
-        lines = [f"backend={self.backend}"]
+        parts = [f"backend={self.backend}"]
         if self.total_ms is not None:
-            lines.append(f"total_ms={self.total_ms:.3f}")
+            parts.append(f"median_ms={self.total_ms:.3f}")
+        device = self.raw.get("device_kind")
+        if device:
+            parts.append(f"device={self.raw.get('device_platform')}:{device}")
         if self.kernel_stats:
-            lines.append(f"kernels={len(self.kernel_stats)} (details in raw)")
-        elif self.raw:
-            lines.append(f"raw_keys={list(self.raw.keys())}")
-        else:
-            lines.append("(profiler stub — no kernel breakdown yet)")
-        return "; ".join(lines)
+            parts.append(f"kernels={len(self.kernel_stats)}")
+        return "; ".join(parts)
 
 
 @dataclass

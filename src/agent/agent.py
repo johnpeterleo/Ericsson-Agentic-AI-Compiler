@@ -1,18 +1,9 @@
-"""Optimization agent: iterative loop around JAX/XLA.
-
-The agent observes compiler IR and profiles, proposes rewrites, and uses the
-evaluator for correctness + speed feedback. Connect an LLM via `OptimizationPolicy`;
-`DemoPolicy` runs without an API key for local integration tests.
-"""
-
 from __future__ import annotations
-
 from dataclasses import dataclass
 from typing import Protocol, Sequence
-
 import jax
 
-from src.agent.tools import AgentToolkit, StubProfiler
+from src.agent.tools import AgentToolkit, JAXProfiler, Profiler
 from src.agent.types import (
     AgentContext,
     AgentRunResult,
@@ -22,7 +13,7 @@ from src.agent.types import (
     RewriteProposal,
 )
 class OptimizationPolicy(Protocol):
-    """Brain of the agent — LLM or scripted stub."""
+    # Brain of the agent, LLM
 
     def propose(self, context: AgentContext) -> RewriteProposal:
         ...
@@ -37,9 +28,9 @@ class AgentConfig:
 
 
 class DemoPolicy:
-    """First-week stub: try one known-safe rewrite, then stop.
+  
 
-    Replace with an LLM policy that reads `prompts.SYSTEM_PROMPT` and calls tools.
+    """ To be reeplaced with an LLM policy that reads `prompts.SYSTEM_PROMPT` and calls tools.
     """
 
     def __init__(self, candidates: Sequence[JaxFn] | None = None):
@@ -61,14 +52,9 @@ class DemoPolicy:
 
 
 class OptimizationAgent:
-    """Runs the observe → propose → measure loop."""
+    # Runs the observe -> propose ->measure loop
 
-    def __init__(
-        self,
-        toolkit: AgentToolkit,
-        policy: OptimizationPolicy,
-        config: AgentConfig | None = None,
-    ):
+    def __init__(self, toolkit: AgentToolkit, policy: OptimizationPolicy, config: AgentConfig | None = None):
         self.toolkit = toolkit
         self.policy = policy
         self.config = config or AgentConfig()
@@ -109,44 +95,34 @@ class OptimizationAgent:
             hlo = self.toolkit.inspect_compilation(candidate_fn, inputs)
             profile = self.toolkit.inspect_profile(candidate_fn, inputs)
 
-            step = OptimizationStep(
-                index=step_index,
-                proposal=proposal,
-                evaluation=evaluation,
-                hlo=hlo,
-                profile=profile,
-            )
+            step = OptimizationStep(index=step_index, proposal=proposal, evaluation=evaluation, hlo=hlo, profile=profile)
             context.history.append(step)
-
             if not evaluation.correct:
                 step.notes = f"Rejected: {evaluation.failure_stage} — {evaluation.message}"
                 continue
-
             speedup = evaluation.speedup
             if speedup is not None and speedup < self.config.min_speedup_to_continue:
                 step.notes = f"No meaningful speedup ({speedup:.3f}x); policy may try another idea."
                 # Keep looping — policy decides next proposal from enriched history.
 
-        return AgentRunResult(
-            status="max_iterations",
-            context=context,
-            message=f"Reached max_iterations={self.config.max_iterations}.",
-        )
+        return AgentRunResult(status="max_iterations", context=context, message=f"Reached max_iterations={self.config.max_iterations}.",)
 
 
 def default_agent(
     policy: OptimizationPolicy | None = None,
     *,
-    profiler: StubProfiler | None = None,
+    profiler: Profiler | None = None,
     config: AgentConfig | None = None,
 ) -> OptimizationAgent:
-    """Factory with stub profiler and optional demo policy."""
-    toolkit = AgentToolkit(profiler=profiler or StubProfiler())
-    return OptimizationAgent(toolkit=toolkit, policy=policy or DemoPolicy(), config=config)
+    """Build agent with real profiler/compiler/evaluator integrations by default."""
+    cfg = config or AgentConfig()
+    active_profiler = profiler or JAXProfiler(repeats=cfg.benchmark_repeats)
+    toolkit = AgentToolkit(profiler=active_profiler, profile_repeats=cfg.benchmark_repeats)
+    return OptimizationAgent(toolkit=toolkit, policy=policy or DemoPolicy(), config=cfg)
 
 
 def format_step_summary(step: OptimizationStep) -> str:
-    """Human-readable one-liner for logs or future LLM context."""
+    # Human-readable one-liner for logs or future LLM context 
     parts = [f"step={step.index}", step.proposal.rationale]
     ev = step.evaluation
     if ev is None:
