@@ -1,0 +1,4 @@
+jax[cuda12]
+numpy
+google-genai
+python-dotenv
