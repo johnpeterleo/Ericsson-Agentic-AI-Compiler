@@ -16,7 +16,7 @@ from src.agent.agent import DemoPolicy, OptimizationPolicy, format_step_summary
 from src.agent.prompts import SYSTEM_PROMPT
 from src.agent.types import AgentContext, JaxFn, RewriteProposal
 
-DEFAULT_GEMINI_MODEL = "gemini-2.0-flash"
+DEFAULT_GEMINI_MODEL = "gemini-3.8-flash"
 MAX_HLO_CHARS = 4000
 
 

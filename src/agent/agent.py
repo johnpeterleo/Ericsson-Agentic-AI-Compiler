@@ -86,19 +86,18 @@ class OptimizationAgent:
                 inputs,
                 repeats=self.config.benchmark_repeats,
             )
-            hlo = self.toolkit.inspect_compilation(candidate_fn, inputs)
-            profile = self.toolkit.inspect_profile(candidate_fn, inputs)
             step = OptimizationStep(
                 index=step_index,
                 proposal=proposal,
                 evaluation=evaluation,
-                hlo=hlo,
-                profile=profile,
             )
-            context.history.append(step)
             if not evaluation.correct:
                 step.notes = f"Rejected: {evaluation.failure_stage} — {evaluation.message}"
+                context.history.append(step)
                 continue
+            step.hlo = self.toolkit.inspect_compilation(candidate_fn, inputs)
+            step.profile = self.toolkit.inspect_profile(candidate_fn, inputs)
+            context.history.append(step)
             speedup = evaluation.speedup
             if speedup is not None and speedup < self.config.min_speedup_to_continue:
                 step.notes = f"No meaningful speedup ({speedup:.3f}x); policy may try another idea."
