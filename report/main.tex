@@ -1,0 +1,182 @@
+% Report skeleton for DD2430 Group 3: Agentic AI Compiler (Ericsson).
+% Target: 6-10 pages, IEEE two-column conference format.
+% Each section lists what belongs there and a rough page budget.
+% Delete the guidance comments and \todo notes as the text gets written.
+
+\documentclass[conference]{IEEEtran}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{amsmath}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage{hyperref}
+
+\newcommand{\todo}[1]{\textcolor{red}{[TODO: #1]}}
+
+\lstset{basicstyle=\footnotesize\ttfamily, breaklines=true, frame=single}
+
+\begin{document}
+
+\title{An Agentic Optimization Loop Around the XLA Compiler\\
+\todo{final title}}
+
+\author{
+\IEEEauthorblockN{Joel Maharena, John Christensen, Lidya Nasser, Sara Strandberg}
+\IEEEauthorblockA{DD2430, KTH Royal Institute of Technology\\
+Project in collaboration with Ericsson}
+}
+
+\maketitle
+
+\begin{abstract}
+% 150-200 words, written last: problem, approach, main quantitative result, main limitation.
+\todo{Write last. One sentence each: why model lowering matters, what we built,
+how we evaluated it, the headline result with its noise band, the main limitation.}
+\end{abstract}
+
+\begin{IEEEkeywords}
+compilers, XLA, JAX, large language models, agents, performance optimization
+\end{IEEEkeywords}
+
+% ---------------------------------------------------------------------------
+\section{Introduction}
+% About 1 page.
+% - Running AI models is costly, so speeding up inference saves money.
+% - Lowering pipeline: experts redesign algorithms, engineers write kernels,
+%   compilers fuse and schedule automatically. Compilers use fixed rewrite rules.
+% - Idea: an LLM agent that reads compiler output and profiles, rewrites code,
+%   and measures the result, like a human performance engineer.
+% - Scope: inference (forward pass) on one NVIDIA L4 GPU.
+% - Contributions as a short bulleted list.
+\todo{Motivation and problem in two paragraphs.}
+
+Our contributions are:
+\begin{itemize}
+  \item \todo{The agent loop around JAX/XLA: observe, propose, verify, measure.}
+  \item \todo{An evaluator that checks correctness before timing, and a noise-floor measurement.}
+  \item \todo{An evaluation on MLP forward passes on an NVIDIA L4, against vanilla XLA.}
+\end{itemize}
+
+% ---------------------------------------------------------------------------
+\section{Related Work}
+% About 0.75 page. Compare each line of work to ours.
+\subsection{Hand-designed algorithmic rewrites}
+\todo{FlashAttention~\cite{dao2022flashattention} as an example of a rewrite a compiler cannot find.}
+
+\subsection{Machine-learning compilers}
+\todo{JAX~\cite{jax} and XLA~\cite{openxla}: fusion, layout, scheduling, and what they cannot change.}
+
+\subsection{LLM agents for kernel and code optimization}
+\todo{KernelBench~\cite{ouyang2025kernelbench}, the Sakana AI CUDA Engineer
+work~\cite{lange2025robust}, AlphaEvolve \todo{add citation}. How ours differs:
+JAX-level rewrites, compiler IR and profiles as feedback.}
+
+% ---------------------------------------------------------------------------
+\section{Problem Description}
+% About 0.5 page. Make the task precise enough that the results can be judged.
+% - Input: a pure JAX function f and example inputs x.
+% - Output: a function g with g(x) close to f(x) within tolerance, and lower latency.
+% - Correctness: |g(x) - f(x)| <= atol + rtol * |f(x)|, with the values used.
+% - Objective: median latency on the target device, excluding compilation.
+% - Baseline: vanilla XLA compilation of f.
+\todo{Formal statement of the optimization task.}
+
+\begin{equation}
+\text{speedup} = \frac{t_{\text{median}}(f)}{t_{\text{median}}(g)}
+\quad \text{subject to} \quad
+|g(x) - f(x)| \le \text{atol} + \text{rtol}\,|f(x)|
+\end{equation}
+
+\todo{State what counts as a real improvement: a speedup outside the noise band.}
+
+% ---------------------------------------------------------------------------
+\section{Methodology and Implementation}
+% About 2 pages. One subsection per component, plus a system diagram.
+\subsection{System overview}
+\todo{The loop: observe (HLO + profile), propose (LLM), verify (evaluator), measure, repeat.}
+
+\begin{figure}[t]
+  \centering
+  \fbox{\parbox{0.9\columnwidth}{\centering\vspace{2em}\todo{system diagram}\vspace{2em}}}
+  \caption{\todo{The agent loop around the XLA compiler.}}
+  \label{fig:system}
+\end{figure}
+
+\subsection{Compiler interface}
+\todo{\texttt{compile\_program}: lowering to StableHLO, compiling to optimized HLO.}
+
+\subsection{Profiler}
+\todo{What is measured, how, and what the agent sees.}
+
+\subsection{Evaluator}
+\todo{Correctness before timing, tolerances, failure stages, median latency.}
+
+\subsection{LLM policy and prompting}
+\todo{Gemini model and version, prompt contents (HLO, profile, source, history),
+JSON reply format, how candidate code is loaded, retries and timeouts.}
+
+\subsection{Numerical precision on the GPU}
+\todo{Default L4 matmul precision is low (TF32-like): median relative error
+$2.9\times10^{-4}$ vs $2.4\times10^{-7}$ with \texttt{highest}. All runs use \texttt{highest}.}
+
+% ---------------------------------------------------------------------------
+\section{Experimental Evaluation}
+% About 2.5 pages. Setup first, then each result with its noise band.
+\subsection{Setup}
+\todo{Hardware (NVIDIA L4, g2-standard-4), software versions (JAX 0.12.0.1, CUDA 12),
+matmul precision, Gemini model, repeats, seeds.}
+
+\subsection{Benchmarks}
+\todo{Seeded ReLU MLPs: 1--10 hidden layers, widths 32/128/256, 1000 examples in batches of 32.
+Two reference programs: a scan-based version with a planted inefficiency, and a vectorized version
+that is already well written.}
+
+\subsection{Measurement noise}
+\todo{Noise floor: identical programs evaluated against each other. Report the 5th--95th percentile band.}
+
+\subsection{Agent results}
+\begin{table}[t]
+  \centering
+  \caption{Agent speedup over vanilla XLA on the NVIDIA L4. \todo{fill in}}
+  \label{tab:agent}
+  \begin{tabular}{@{}lrrr@{}}
+    \toprule
+    Reference & Correct candidates & Median speedup & Above noise band \\
+    \midrule
+    Scan (planted) & \todo{} & \todo{} & \todo{} \\
+    Vectorized & \todo{} & \todo{} & \todo{} \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+\todo{Results per architecture (figure), example rewrite, failure cases.}
+
+\subsection{JAX on GPU versus NumPy on CPU}
+\todo{Optional context table. Note that it calls the program once per batch, so it
+mostly measures launch overhead on the GPU.}
+
+% ---------------------------------------------------------------------------
+\section{Summary and Discussion}
+% About 1 page.
+% - What worked, what did not, and why.
+% - Limitations: one model family, one GPU, one LLM, single-input correctness check,
+%   no custom kernels, peak memory not measured.
+% - Future work.
+\todo{Summary of findings.}
+\todo{Limitations and threats to validity.}
+\todo{Future work.}
+
+% ---------------------------------------------------------------------------
+\section{Summary of Discussions with the Opposing Group}
+% About 0.5 page. Fill in after the opposition on Dec 10.
+\todo{Main points raised by the opposing group and how the report was changed in response.}
+
+\section*{Acknowledgment}
+We thank Alexander Kravberg at Ericsson for supervising the project.
+
+\bibliographystyle{IEEEtran}
+\bibliography{references}
+
+\end{document}

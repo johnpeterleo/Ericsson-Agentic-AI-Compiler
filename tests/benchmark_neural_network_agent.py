@@ -13,7 +13,10 @@ architecture gets 1,000 random input examples, padded to batches of 32.
 """
 
 import argparse
+import json
+from datetime import datetime
 from math import ceil
+from pathlib import Path
 from statistics import mean, median
 
 import jax
@@ -21,8 +24,42 @@ import jax.numpy as jnp
 import numpy as np
 
 from src.agent.agent import AgentConfig, OptimizationAgent, format_step_summary
-from src.agent.llm_policy import DEFAULT_GEMINI_MODEL, GeminiPolicy, load_project_env
+from src.agent.llm_policy import (
+    DEFAULT_GEMINI_MODEL,
+    GeminiPolicy,
+    LLMUnavailableError,
+    load_project_env,
+)
 from src.agent.tools import AgentToolkit, JaxProfiler
+
+RESULTS_DIR = Path("artifacts/agent-runs")
+
+
+def _default_results_path():
+    return RESULTS_DIR / f"{datetime.now():%Y%m%d-%H%M%S}.jsonl"
+
+
+def _append_record(results_path, record):
+    """Write one JSON line right away, so a crash keeps the earlier results."""
+    results_path.parent.mkdir(parents=True, exist_ok=True)
+    with results_path.open("a") as results_file:
+        results_file.write(json.dumps(record) + "\n")
+
+
+def _step_record(step):
+    evaluation = step.evaluation
+    return {
+        "status": "evaluated",
+        "step": step.index,
+        "rationale": step.proposal.rationale,
+        "candidate_source": step.proposal.metadata.get("candidate_source"),
+        "correct": evaluation.correct,
+        "failure_stage": evaluation.failure_stage,
+        "message": evaluation.message,
+        "reference_ms": evaluation.reference_ms,
+        "candidate_ms": evaluation.candidate_ms,
+        "speedup": evaluation.speedup,
+    }
 
 
 def mlp_dataset_reference(
@@ -41,6 +78,24 @@ def mlp_dataset_reference(
 
     _, batch_outputs = jax.lax.scan(apply_batch, None, input_batches)
     return batch_outputs.reshape((-1, output_weight.shape[-1]))
+
+
+def mlp_vectorized_reference(
+    hidden_weights, hidden_biases, output_weight, output_bias, input_batches
+):
+    """The same MLP written the efficient way: every batch at once, no scan.
+
+    This is the fair baseline. Any speedup here is beyond a plain rewrite.
+    """
+    activations = input_batches.reshape((-1, input_batches.shape[-1]))
+    for layer in range(hidden_weights.shape[0]):
+        activations = jax.nn.relu(
+            activations @ hidden_weights[layer] + hidden_biases[layer]
+        )
+    return activations @ output_weight + output_bias
+
+
+REFERENCES = {"scan": mlp_dataset_reference, "vectorized": mlp_vectorized_reference}
 
 
 def make_agent_inputs(depth, width, samples, batch_size, rng, output_size=10):
@@ -88,8 +143,12 @@ def run_agent_benchmark(
     seed=2026,
     jax_backend="default",
     model=DEFAULT_GEMINI_MODEL,
+    results_path=None,
+    reference="scan",
 ):
     """Ask Gemini for JAX rewrites and evaluate them through the project agent."""
+    results_path = results_path or _default_results_path()
+    reference_fn = REFERENCES[reference]
     if min(samples, batch_size, repeats, iterations) < 1:
         raise ValueError("samples, batch_size, repeats, and iterations must be positive")
 
@@ -125,6 +184,10 @@ def run_agent_benchmark(
     )
     padded_count = ceil(samples / batch_size) * batch_size
     print(f"Batch padding: {padded_count - samples} zero-filled examples")
+    print(f"Saving results to: {results_path}")
+    matmul_precision = jax.config.jax_default_matmul_precision or "default"
+    print(f"Matmul precision: {matmul_precision}")
+    print(f"Reference program: {reference}")
 
     rng = np.random.default_rng(seed)
     successful_speedups = []
@@ -132,8 +195,24 @@ def run_agent_benchmark(
         for width in widths:
             host_inputs = make_agent_inputs(depth, width, samples, batch_size, rng)
             device_inputs = tuple(jax.device_put(value, device) for value in host_inputs)
-            with jax.default_device(device):
-                result = agent.run(mlp_dataset_reference, device_inputs)
+            run_details = {
+                "depth": depth,
+                "width": width,
+                "model": model,
+                "device": f"{device.platform} ({device.device_kind})",
+                "matmul_precision": matmul_precision,
+                "reference": reference,
+            }
+            try:
+                with jax.default_device(device):
+                    result = agent.run(reference_fn, device_inputs)
+            except (LLMUnavailableError, ValueError) as error:
+                print(f"\nArchitecture {depth} x {width} skipped: {error}")
+                _append_record(
+                    results_path,
+                    {**run_details, "status": "skipped", "message": str(error)},
+                )
+                continue
 
             baseline_ms = result.context.baseline_profile.total_ms
             baseline_text = (
@@ -145,11 +224,16 @@ def run_agent_benchmark(
             )
             if not result.context.history:
                 print(f"Agent stopped: {result.message}")
+                _append_record(
+                    results_path,
+                    {**run_details, "status": "stopped", "message": result.message},
+                )
                 continue
 
             case_speedups = []
             for step in result.context.history:
                 print(format_step_summary(step))
+                _append_record(results_path, {**run_details, **_step_record(step)})
                 evaluation = step.evaluation
                 if evaluation and evaluation.correct and evaluation.speedup is not None:
                     case_speedups.append(evaluation.speedup)
@@ -178,6 +262,8 @@ def main():
     parser.add_argument("--seed", type=int, default=2026)
     parser.add_argument("--jax-backend", choices=("default", "cpu", "gpu"), default="default")
     parser.add_argument("--model", default=DEFAULT_GEMINI_MODEL)
+    parser.add_argument("--results-file", type=Path, default=None)
+    parser.add_argument("--reference", choices=tuple(REFERENCES), default="scan")
     args = parser.parse_args()
     run_agent_benchmark(
         depths=args.depths,
@@ -189,6 +275,8 @@ def main():
         seed=args.seed,
         jax_backend=args.jax_backend,
         model=args.model,
+        results_path=args.results_file,
+        reference=args.reference,
     )
 
 

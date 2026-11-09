@@ -6,6 +6,7 @@ import inspect
 import json
 import os
 import re
+import time
 from pathlib import Path
 from typing import Any, Sequence
 
@@ -18,6 +19,35 @@ from src.agent.types import AgentContext, JaxFn, RewriteProposal
 
 DEFAULT_GEMINI_MODEL = "gemini-3.8-flash"
 MAX_HLO_CHARS = 4000
+REQUEST_TIMEOUT_MS = 120_000
+RETRY_WAIT_SECONDS = (30, 60, 120, 240)
+HTTP_TOO_MANY_REQUESTS = 429
+HTTP_SERVER_ERROR_START = 500
+
+
+class LLMUnavailableError(RuntimeError):
+    """Gemini was still unavailable, slow, or rate-limited after every retry."""
+
+
+def _is_daily_quota_error(error) -> bool:
+    """A used-up daily quota only resets the next day, so waiting minutes cannot help."""
+    message = (getattr(error, "message", None) or "").lower()
+    return "per day" in message or "perday" in message
+
+
+def _is_temporary_error(error) -> bool:
+    """Network problems and timeouts have no status code and are always temporary."""
+    code = getattr(error, "code", None)
+    if code is None:
+        return True
+    if code == HTTP_TOO_MANY_REQUESTS:
+        return not _is_daily_quota_error(error)
+    return code >= HTTP_SERVER_ERROR_START
+
+
+def _describe_error(error) -> str:
+    code = getattr(error, "code", None)
+    return f"status {code}" if code is not None else type(error).__name__
 
 
 def load_project_env() -> None:
@@ -102,8 +132,42 @@ class GeminiPolicy:
                 raise ImportError(
                     "Install the Gemini SDK: pip install google-genai"
                 ) from error
-            self._client = genai.Client(api_key=self.api_key)
+            self._client = genai.Client(
+                api_key=self.api_key,
+                http_options={"timeout": REQUEST_TIMEOUT_MS},
+            )
         return self._client
+
+    def _generate_with_retries(self, user_text: str):
+        """Call Gemini, waiting and retrying when the error is temporary.
+
+        A request that takes longer than ``REQUEST_TIMEOUT_MS`` counts as temporary.
+        Permanent errors, such as a bad key or no credit, are raised immediately.
+        """
+        from google.genai.errors import APIError
+        from httpx import TransportError
+
+        client = self._client_lazy()
+        final_attempt = None
+        for wait_seconds in (*RETRY_WAIT_SECONDS, final_attempt):
+            try:
+                return self._generate(client, user_text)
+            except (APIError, TransportError) as error:
+                if not _is_temporary_error(error):
+                    raise
+                if wait_seconds is final_attempt:
+                    raise LLMUnavailableError(
+                        f"Gemini failed every retry ({_describe_error(error)})"
+                    ) from error
+                print(f"Gemini {_describe_error(error)}; retrying in {wait_seconds} s")
+                time.sleep(wait_seconds)
+
+    def _generate(self, client, user_text: str):
+        return client.models.generate_content(
+            model=self.model,
+            contents=user_text,
+            config={"system_instruction": SYSTEM_PROMPT},
+        )
 
     def propose(self, context: AgentContext) -> RewriteProposal:
         reference_source = None
@@ -112,12 +176,7 @@ class GeminiPolicy:
         except (OSError, TypeError):
             reference_source = "# source unavailable (built-in or lambda)"
         user_text = format_context_for_llm(context, reference_source=reference_source)
-        client = self._client_lazy()
-        response = client.models.generate_content(
-            model=self.model,
-            contents=user_text,
-            config={"system_instruction": SYSTEM_PROMPT},
-        )
+        response = self._generate_with_retries(user_text)
         raw_text = getattr(response, "text", None) or str(response)
         payload = _extract_json_object(raw_text)
         rationale = str(payload.get("rationale", ""))
@@ -136,7 +195,11 @@ class GeminiPolicy:
                 rationale=f"Invalid candidate from LLM: {type(error).__name__}: {error}",
                 stop=True,
             )
-        return RewriteProposal(rationale=rationale, candidate_fn=candidate_fn)
+        return RewriteProposal(
+            rationale=rationale,
+            candidate_fn=candidate_fn,
+            metadata={"candidate_source": str(source)},
+        )
 
 
 def create_default_policy(
