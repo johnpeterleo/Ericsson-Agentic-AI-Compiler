@@ -6,11 +6,14 @@ device and that the expert passes the correctness check here:
 
     python -m experiments.run_suite
 
-With --agent, Gemini also gets `--iterations` attempts at every program. Each
-attempt is one request, so 9 programs x 3 attempts is 27 requests:
+With --agent, an LLM also gets `--iterations` attempts at every program. Each
+attempt is one request, so 13 programs x 3 attempts is 39 requests. The LLM is
+Gemini by default; `--policy claude` uses Claude through the logged-in Claude
+Code CLI instead of an API key:
 
     python -m experiments.run_suite --agent
     python -m experiments.run_suite --agent --programs attention,prefix_sums
+    python -m experiments.run_suite --agent --policy claude --programs prefix_sums
 """
 
 import argparse
@@ -23,7 +26,9 @@ import numpy as np
 
 from src.agent.agent import AgentConfig, OptimizationAgent, format_step_summary
 from src.agent.llm_policy import (
+    DEFAULT_CLAUDE_MODEL,
     DEFAULT_GEMINI_MODEL,
+    ClaudeCLIPolicy,
     GeminiPolicy,
     LLMQuotaExhaustedError,
     LLMUnavailableError,
@@ -81,13 +86,19 @@ def first_solving_step(history, expert_speedup):
     return None
 
 
-def make_agent(args, device):
+def make_policy(args):
+    if args.policy == "claude":
+        return ClaudeCLIPolicy(model=args.model)
     load_project_env()
+    return GeminiPolicy(model=args.model)
+
+
+def make_agent(args, device):
     return OptimizationAgent(
         toolkit=AgentToolkit(
             profiler=JaxProfiler(repeats=args.repeats), profile_repeats=args.repeats
         ),
-        policy=GeminiPolicy(model=args.model),
+        policy=make_policy(args),
         config=AgentConfig(
             max_iterations=args.iterations,
             benchmark_repeats=args.repeats,
@@ -155,10 +166,14 @@ def parse_arguments(argv):
     )
     parser.add_argument("--programs", type=_program_list, default=PROGRAMS)
     parser.add_argument("--repeats", type=int, default=20)
-    parser.add_argument("--agent", action="store_true", help="also let Gemini try each program")
+    parser.add_argument("--agent", action="store_true", help="also let an LLM try each program")
+    parser.add_argument("--policy", choices=("gemini", "claude"), default="gemini")
     parser.add_argument("--iterations", type=int, default=3, help="agent attempts per program")
-    parser.add_argument("--model", default=DEFAULT_GEMINI_MODEL)
-    return parser.parse_args(argv)
+    parser.add_argument("--model", help="model name (default depends on --policy)")
+    args = parser.parse_args(argv)
+    if args.model is None:
+        args.model = DEFAULT_CLAUDE_MODEL if args.policy == "claude" else DEFAULT_GEMINI_MODEL
+    return args
 
 
 def main(argv=None):
@@ -168,6 +183,7 @@ def main(argv=None):
         "device": f"{device.platform} ({device.device_kind})",
         "matmul_precision": jax.config.jax_default_matmul_precision or "default",
         "repeats": args.repeats,
+        "policy": args.policy if args.agent else None,
         "model": args.model if args.agent else None,
     }
     log = RunLog(RESULTS_DIR / f"{datetime.now():%Y%m%d-%H%M%S}.jsonl", run_details)

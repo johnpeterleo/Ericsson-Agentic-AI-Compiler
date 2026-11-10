@@ -155,7 +155,7 @@ target GPU for GPU performance comparisons.
 
 ### Benchmark suite
 
-`src/benchmarks/programs.py` holds 9 small JAX programs. Each has a
+`src/benchmarks/programs.py` holds 13 small JAX programs. Each has a
 `reference` (a natural way to write it) and an `expert` rewrite (the fastest
 version we know). The rewrites change the algorithm, which XLA does not do by
 itself. The agent is shown only the source of the reference.
@@ -171,7 +171,7 @@ python -m experiments.run_suite
 ```
 
 Let the agent try each program. Every attempt is one Gemini request, so the
-default of 3 attempts on 9 programs is 27 requests. The free tier allows 20
+default of 3 attempts on 13 programs is 39 requests. The free tier allows 20
 per model per day; use `--programs` to split a run over two days:
 
 ```bash

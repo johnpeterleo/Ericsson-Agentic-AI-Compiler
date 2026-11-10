@@ -28,6 +28,9 @@ import numpy as np
 FEATURES = 64
 POLYNOMIAL_TERMS = 24
 EMBEDDING_WIDTH = 128
+WINDOW = 64
+LOW_RANK = 16
+VECTOR_COUNT = 256
 
 
 @dataclass(frozen=True)
@@ -194,12 +197,88 @@ def _prefix_sums_inputs(rng, size):
     return (_positive(rng, size, size),)
 
 
+# The programs below are harder: a correctness trap, a hidden structure, and
+# two that need two rewrites each.
+
+
+def moving_window_sums(sequences):
+    window = 64
+    positions = jnp.arange(sequences.shape[-1])
+    distance = positions[None, :] - positions[:, None]
+    in_window = (distance >= 0) & (distance < window)
+    return sequences @ in_window.astype(sequences.dtype)
+
+
+def moving_window_sums_expert(sequences):
+    # Sums each window directly. Differences of a running total are faster to
+    # write, but on long rows they lose too much float32 precision to pass.
+    return jax.lax.reduce_window(
+        sequences, 0.0, jax.lax.add, (1, WINDOW), (1, 1), ((0, 0), (WINDOW - 1, 0))
+    )
+
+
+def _moving_window_sums_inputs(rng, size):
+    return (_positive(rng, size // 4, size),)
+
+
+def circulant_times_vectors(kernel, vectors):
+    length = kernel.shape[0]
+    positions = jnp.arange(length)
+    matrix = kernel[(positions[:, None] - positions[None, :]) % length]
+    return vectors @ matrix.T
+
+
+def circulant_times_vectors_expert(kernel, vectors):
+    length = kernel.shape[0]
+    spectrum = jnp.fft.rfft(vectors, axis=-1) * jnp.fft.rfft(kernel)
+    return jnp.fft.irfft(spectrum, n=length, axis=-1)
+
+
+def _circulant_times_vectors_inputs(rng, size):
+    return _positive(rng, size), _positive(rng, size, size)
+
+
+def low_rank_plus_diagonal_times_vectors(left, right, diagonal, vectors):
+    matrix = left @ right.T + jnp.diag(diagonal)
+    return matrix @ vectors
+
+
+def low_rank_plus_diagonal_times_vectors_expert(left, right, diagonal, vectors):
+    return left @ (right.T @ vectors) + diagonal[:, None] * vectors
+
+
+def _low_rank_plus_diagonal_times_vectors_inputs(rng, size):
+    return (
+        _positive(rng, size, LOW_RANK),
+        _positive(rng, size, LOW_RANK),
+        _positive(rng, size),
+        _positive(rng, size, VECTOR_COUNT),
+    )
+
+
+def matrix_polynomial_times_vector(matrix, vector):
+    square = matrix @ matrix
+    cube = square @ matrix
+    return (cube + 2.0 * square + 3.0 * matrix) @ vector
+
+
+def matrix_polynomial_times_vector_expert(matrix, vector):
+    # Horner's rule: A(A(Av + 2v) + 3v) = (A^3 + 2A^2 + 3A)v.
+    return matrix @ (matrix @ (matrix @ vector + 2.0 * vector) + 3.0 * vector)
+
+
+def _matrix_polynomial_times_vector_inputs(rng, size):
+    weights = _positive(rng, size, size)
+    return weights / weights.sum(axis=1, keepdims=True), _positive(rng, size)
+
+
 # Benchmark sizes were chosen on an NVIDIA L4 (artifacts/gpu-sizes/sweep.jsonl):
 # the smallest size tried at which the expert takes at least 0.7 ms, five times
 # the GPU's fixed cost per call (about 0.14 ms). Below that, the measured
 # speedup mostly reflects that fixed cost. The experts of
 # kronecker_product_times_vector and embed_tokens stay near 0.2 ms at every
 # size that fits in memory, so those two use the largest size tried.
+# The sizes of the last four programs are provisional: not yet measured on the L4.
 PROGRAMS = (
     BenchmarkProgram(
         reference=matrix_chain_times_vector,
@@ -272,6 +351,38 @@ PROGRAMS = (
         make_inputs=_prefix_sums_inputs,
         benchmark_size=4096,
         test_size=6,
+    ),
+    BenchmarkProgram(
+        reference=moving_window_sums,
+        expert=moving_window_sums_expert,
+        rewrite="sum each window directly, no product with a banded matrix",
+        make_inputs=_moving_window_sums_inputs,
+        benchmark_size=8192,
+        test_size=128,
+    ),
+    BenchmarkProgram(
+        reference=circulant_times_vectors,
+        expert=circulant_times_vectors_expert,
+        rewrite="the matrix is circulant: multiply with FFTs",
+        make_inputs=_circulant_times_vectors_inputs,
+        benchmark_size=2048,
+        test_size=8,
+    ),
+    BenchmarkProgram(
+        reference=low_rank_plus_diagonal_times_vectors,
+        expert=low_rank_plus_diagonal_times_vectors_expert,
+        rewrite="never build the matrix; multiply the thin factors first",
+        make_inputs=_low_rank_plus_diagonal_times_vectors_inputs,
+        benchmark_size=4096,
+        test_size=8,
+    ),
+    BenchmarkProgram(
+        reference=matrix_polynomial_times_vector,
+        expert=matrix_polynomial_times_vector_expert,
+        rewrite="Horner's rule with matrix-vector products only",
+        make_inputs=_matrix_polynomial_times_vector_inputs,
+        benchmark_size=2048,
+        test_size=8,
     ),
 )
 
