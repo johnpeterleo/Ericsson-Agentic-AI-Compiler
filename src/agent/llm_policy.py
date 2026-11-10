@@ -13,12 +13,13 @@ from typing import Any, Sequence
 import jax
 import jax.numpy as jnp
 
-from src.agent.agent import DemoPolicy, OptimizationPolicy, format_step_summary
+from src.agent.agent import DemoPolicy, OptimizationPolicy
 from src.agent.prompts import SYSTEM_PROMPT
-from src.agent.types import AgentContext, JaxFn, RewriteProposal
+from src.agent.types import AgentContext, JaxFn, OptimizationStep, RewriteProposal
 
 DEFAULT_GEMINI_MODEL = "gemini-3.8-flash"
 MAX_HLO_CHARS = 4000
+MAX_FAILURE_MESSAGE_CHARS = 1000
 REQUEST_TIMEOUT_MS = 120_000
 RETRY_WAIT_SECONDS = (30, 60, 120, 240)
 HTTP_TOO_MANY_REQUESTS = 429
@@ -27,6 +28,10 @@ HTTP_SERVER_ERROR_START = 500
 
 class LLMUnavailableError(RuntimeError):
     """Gemini was still unavailable, slow, or rate-limited after every retry."""
+
+
+class LLMQuotaExhaustedError(LLMUnavailableError):
+    """The daily request quota is used up, so no request can succeed until it resets."""
 
 
 def _is_daily_quota_error(error) -> bool:
@@ -81,6 +86,51 @@ def _load_candidate_from_source(source: str) -> JaxFn:
     return candidate
 
 
+def _attempt_outcome(step: OptimizationStep) -> str:
+    evaluation = step.evaluation
+    if evaluation is None:
+        return "not evaluated"
+    if not evaluation.correct:
+        message = (evaluation.message or "")[:MAX_FAILURE_MESSAGE_CHARS]
+        return f"rejected at {evaluation.failure_stage}: {message}"
+    return (
+        f"correct, speedup {evaluation.speedup:.3f}x "
+        f"(reference {evaluation.reference_ms:.3f} ms, candidate {evaluation.candidate_ms:.3f} ms)"
+    )
+
+
+def _format_attempt(step: OptimizationStep) -> list[str]:
+    lines = [
+        f"--- attempt {step.index}: {_attempt_outcome(step)}",
+        f"rationale: {step.proposal.rationale}",
+    ]
+    source = step.proposal.metadata.get("candidate_source")
+    if source:
+        lines.extend(["candidate_source:", source.strip()])
+    return lines
+
+
+def _format_previous_attempts(context: AgentContext) -> list[str]:
+    """Show the model what it already tried: the code, the result, and the best so far."""
+    lines = ["previous_attempts (each was compiled, checked against the reference, and timed):"]
+    for step in context.history:
+        lines.extend(_format_attempt(step))
+
+    best = context.best_step()
+    if best is None:
+        lines.append(
+            "No attempt has been correct yet. Fix the reported problem or try a different rewrite."
+        )
+        return lines
+    lines.append(f"best_so_far: attempt {best.index} ({best.evaluation.speedup:.3f}x)")
+    if best.hlo and best.hlo.optimized_hlo:
+        lines.extend(["best_so_far_optimized_hlo:", best.hlo.optimized_hlo[:MAX_HLO_CHARS]])
+    lines.append(
+        "Improve on the best attempt or try a different idea. Do not repeat a rejected attempt."
+    )
+    return lines
+
+
 def format_context_for_llm(context: AgentContext, *, reference_source: str | None = None) -> str:
     lines = [
         f"backend={context.backend}",
@@ -95,9 +145,7 @@ def format_context_for_llm(context: AgentContext, *, reference_source: str | Non
     if reference_source:
         lines.extend(["reference_jax_source:", reference_source.strip()])
     if context.history:
-        lines.append("previous_steps:")
-        for step in context.history:
-            lines.append(format_step_summary(step))
+        lines.extend(_format_previous_attempts(context))
     lines.append(
         'Respond with JSON only: {"stop": bool, "rationale": str, '
         '"candidate_source": str | null}. '
@@ -142,7 +190,8 @@ class GeminiPolicy:
         """Call Gemini, waiting and retrying when the error is temporary.
 
         A request that takes longer than ``REQUEST_TIMEOUT_MS`` counts as temporary.
-        Permanent errors, such as a bad key or no credit, are raised immediately.
+        Permanent errors, such as a bad key, are raised immediately. A used-up
+        daily quota is raised as ``LLMQuotaExhaustedError`` so callers can stop cleanly.
         """
         from google.genai.errors import APIError
         from httpx import TransportError
@@ -153,6 +202,10 @@ class GeminiPolicy:
             try:
                 return self._generate(client, user_text)
             except (APIError, TransportError) as error:
+                if _is_daily_quota_error(error):
+                    raise LLMQuotaExhaustedError(
+                        f"Gemini daily quota is used up for {self.model}"
+                    ) from error
                 if not _is_temporary_error(error):
                     raise
                 if wait_seconds is final_attempt:
@@ -170,6 +223,11 @@ class GeminiPolicy:
         )
 
     def propose(self, context: AgentContext) -> RewriteProposal:
+        """Ask Gemini for the next rewrite.
+
+        A reply that cannot be used comes back with ``load_error`` set. The agent
+        shows that error to Gemini on the next attempt instead of ending the run.
+        """
         reference_source = None
         try:
             reference_source = inspect.getsource(context.reference_fn)
@@ -178,27 +236,32 @@ class GeminiPolicy:
         user_text = format_context_for_llm(context, reference_source=reference_source)
         response = self._generate_with_retries(user_text)
         raw_text = getattr(response, "text", None) or str(response)
-        payload = _extract_json_object(raw_text)
+        try:
+            payload = _extract_json_object(raw_text)
+        except ValueError as error:
+            return RewriteProposal(
+                rationale="", load_error=f"The reply was not the requested JSON object: {error}"
+            )
         rationale = str(payload.get("rationale", ""))
         if payload.get("stop"):
             return RewriteProposal(rationale=rationale or "LLM requested stop.", stop=True)
-        source = payload.get("candidate_source")
-        if not source or not str(source).strip():
+        source = str(payload.get("candidate_source") or "")
+        if not source.strip():
             return RewriteProposal(
-                rationale=rationale or "LLM did not supply candidate_source.",
-                stop=True,
+                rationale=rationale, load_error="The reply had no candidate_source."
             )
         try:
-            candidate_fn = _load_candidate_from_source(str(source))
+            candidate_fn = _load_candidate_from_source(source)
         except Exception as error:
             return RewriteProposal(
-                rationale=f"Invalid candidate from LLM: {type(error).__name__}: {error}",
-                stop=True,
+                rationale=rationale,
+                metadata={"candidate_source": source},
+                load_error=f"{type(error).__name__}: {error}",
             )
         return RewriteProposal(
             rationale=rationale,
             candidate_fn=candidate_fn,
-            metadata={"candidate_source": str(source)},
+            metadata={"candidate_source": source},
         )
 
 

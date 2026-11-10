@@ -21,6 +21,7 @@ Ericsson-Agentic-AI-Compiler/
 │
 ├── src/
 │   ├── agent/
+│   ├── benchmarks/
 │   ├── compiler/
 │   ├── profiling/
 │   └── optimization/
@@ -120,11 +121,26 @@ floating-point array with the same shape and dtype. Values are compared using
 `atol + rtol * abs(reference)`, with defaults of `rtol=1e-5` and `atol=1e-6`.
 Tolerances must be finite, nonnegative scalars; `repeats` must be a positive integer.
 
+Pass `holdout_inputs`, a second tuple with the same shapes and dtypes, to also
+check the candidate on an input case the agent never saw. A candidate that is
+only right for the values of the first input is then rejected.
+
+Pass `compile_time_limit` (seconds) to reject a candidate that takes longer to
+compile. XLA cannot be stopped mid-compile, so the program is first compiled
+in a child process that is killed at the limit (see
+`src/compiler/compile_time_limit.py`). On the L4, XLA's autotuner took over 15
+minutes to compile one short program. The agent uses a limit of 60 s by
+default (`AgentConfig.compile_time_limit_seconds`).
+
 Successful evaluations report median execution times in milliseconds and an
 observed speedup. Compilation, input placement, and warm-up are excluded from
-timing. Candidate failures report a `failure_stage` (`compile`, `execute`,
-`correctness`, or `benchmark`) and a readable `message`, without timings or a
-speedup. Invalid arguments and reference-function errors raise exceptions.
+timing. The two programs are timed in turns, and the one that goes first swaps
+every round: timing one program completely before the other made two identical
+programs measure 1% to 3% apart. Candidate failures report a `failure_stage`
+(`compile`, `execute`, `correctness`, or `benchmark`) and a readable `message`,
+without timings or a speedup. The agent adds a fifth stage, `load`, for a
+Gemini reply that could not be turned into a function. Invalid arguments and
+reference-function errors raise exceptions.
 
 Run the demo and tests from the repository root with the environment activated:
 
@@ -136,6 +152,38 @@ python -m unittest discover -s tests -v
 The demo uses minimal inputs. A single evaluation does not establish general
 correctness or a repeatable speedup, and peak memory is not measured. Use the
 target GPU for GPU performance comparisons.
+
+### Benchmark suite
+
+`src/benchmarks/programs.py` holds 9 small JAX programs. Each has a
+`reference` (a natural way to write it) and an `expert` rewrite (the fastest
+version we know). The rewrites change the algorithm, which XLA does not do by
+itself. The agent is shown only the source of the reference.
+
+The input sizes are chosen for the NVIDIA L4, so each expert takes at least
+0.7 ms there (see the comment above `PROGRAMS`). A full run on a laptop CPU
+is slow and needs several GB of memory.
+
+Measure the expert speedups on the current device. This makes no LLM request:
+
+```bash
+python -m experiments.run_suite
+```
+
+Let the agent try each program. Every attempt is one Gemini request, so the
+default of 3 attempts on 9 programs is 27 requests. The free tier allows 20
+per model per day; use `--programs` to split a run over two days:
+
+```bash
+python -m experiments.run_suite --agent
+python -m experiments.run_suite --agent --programs attention,prefix_sums
+```
+
+After each attempt the agent is shown its own code, the evaluator's verdict
+(the error message or the speedup), and the best attempt so far. The final
+table lists the expert speedup, the agent's best speedup, the agent's share of
+the expert speedup, and the first attempt that reached 70% of it. Results are
+saved to `artifacts/suite-runs/`.
 
 ## GPU setup
 

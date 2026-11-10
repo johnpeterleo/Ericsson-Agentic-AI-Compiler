@@ -99,9 +99,20 @@ def evaluate_candidate(
     repeats: int = 20,
     rtol: float = 1e-5,
     atol: float = 1e-6,
+    holdout_inputs: InputTuple | None = None,
+    compile_time_limit: float | None = None,
 ) -> EvaluationResult:
     """Correctness + timing vs reference (``src.optimization.evaluator``)."""
-    return evaluate(reference_fn, candidate_fn, inputs, repeats=repeats, rtol=rtol, atol=atol)
+    return evaluate(
+        reference_fn,
+        candidate_fn,
+        inputs,
+        repeats=repeats,
+        rtol=rtol,
+        atol=atol,
+        holdout_inputs=holdout_inputs,
+        compile_time_limit=compile_time_limit,
+    )
 
 
 @dataclass
@@ -122,10 +133,14 @@ class AgentToolkit:
         inputs: InputTuple,
         *,
         repeats: int | None = None,
+        holdout_inputs: InputTuple | None = None,
+        compile_time_limit: float | None = None,
     ) -> EvaluationResult:
         return evaluate_candidate(
             reference_fn,
             candidate_fn,
             inputs,
             repeats=repeats if repeats is not None else self.profile_repeats,
+            holdout_inputs=holdout_inputs,
+            compile_time_limit=compile_time_limit,
         )

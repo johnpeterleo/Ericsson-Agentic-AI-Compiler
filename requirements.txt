@@ -2,3 +2,5 @@ jax
 numpy
 google-genai
 python-dotenv
+# Needed by jax.export, which the compile time limit uses.
+flatbuffers

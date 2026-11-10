@@ -39,10 +39,15 @@ class ProfileReport:
 
 @dataclass
 class RewriteProposal:
+    """`load_error` says why the policy's reply could not be used as a candidate.
+    The agent records it as a failed attempt and asks again, instead of stopping.
+    """
+
     rationale: str
     candidate_fn: JaxFn | None = None
     stop: bool = False
     metadata: Mapping[str, Any] = field(default_factory=dict)
+    load_error: str | None = None
 
 
 @dataclass
@@ -69,13 +74,16 @@ class AgentContext:
     def last_step(self) -> OptimizationStep | None:
         return self.history[-1] if self.history else None
 
+    def best_step(self) -> OptimizationStep | None:
+        """The correct step with the highest speedup, or None if no step was correct."""
+        correct_steps = [
+            step for step in self.history if step.evaluation and step.evaluation.correct
+        ]
+        return max(correct_steps, key=lambda step: step.evaluation.speedup, default=None)
+
     def best_speedup(self) -> float | None:
-        best: float | None = None
-        for step in self.history:
-            if step.evaluation and step.evaluation.correct and step.evaluation.speedup is not None:
-                if best is None or step.evaluation.speedup > best:
-                    best = step.evaluation.speedup
-        return best
+        best = self.best_step()
+        return best.evaluation.speedup if best else None
 
 
 @dataclass

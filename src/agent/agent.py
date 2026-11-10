@@ -11,6 +11,8 @@ from src.agent.types import (
     OptimizationStep,
     RewriteProposal,
 )
+from src.compiler.compile_time_limit import COMPILE_TIME_LIMIT_SECONDS
+from src.optimization.evaluator import EvaluationResult
 
 
 class OptimizationPolicy(Protocol):
@@ -25,6 +27,8 @@ class AgentConfig:
     benchmark_repeats: int = 10
     min_speedup_to_continue: float = 1.0
     hardware_note: str = "Target: NVIDIA GPU via JAX cuda backend."
+    # Seconds; a candidate that compiles longer is rejected. None turns the check off.
+    compile_time_limit_seconds: float | None = COMPILE_TIME_LIMIT_SECONDS
 
 
 class DemoPolicy:
@@ -48,6 +52,19 @@ class DemoPolicy:
         )
 
 
+def _load_failure_step(index: int, proposal: RewriteProposal) -> OptimizationStep:
+    """A reply that could not be used. It stays in the history so the policy sees why."""
+    evaluation = EvaluationResult(
+        correct=False, failure_stage="load", message=proposal.load_error
+    )
+    return OptimizationStep(
+        index=index,
+        proposal=proposal,
+        evaluation=evaluation,
+        notes=f"Rejected: load — {proposal.load_error}",
+    )
+
+
 class OptimizationAgent:
     # Runs the observe -> propose -> measure loop
     def __init__(self, toolkit: AgentToolkit, policy: OptimizationPolicy, config: AgentConfig | None = None):
@@ -69,10 +86,23 @@ class OptimizationAgent:
             hardware_note=self.config.hardware_note,
         )
 
-    def run(self, reference_fn: JaxFn, inputs: InputTuple) -> AgentRunResult:
+    def run(
+        self,
+        reference_fn: JaxFn,
+        inputs: InputTuple,
+        holdout_inputs: InputTuple | None = None,
+    ) -> AgentRunResult:
+        """Let the policy propose rewrites until it stops or the attempts run out.
+
+        The policy only ever sees `inputs`. `holdout_inputs` is a second input
+        case that every candidate must also get right (see the evaluator).
+        """
         context = self.build_context(reference_fn, inputs)
         for step_index in range(self.config.max_iterations):
             proposal = self.policy.propose(context)
+            if proposal.load_error is not None:
+                context.history.append(_load_failure_step(step_index, proposal))
+                continue
             if proposal.stop or proposal.candidate_fn is None:
                 return AgentRunResult(
                     status="stopped_by_policy",
@@ -85,6 +115,8 @@ class OptimizationAgent:
                 candidate_fn,
                 inputs,
                 repeats=self.config.benchmark_repeats,
+                holdout_inputs=holdout_inputs,
+                compile_time_limit=self.config.compile_time_limit_seconds,
             )
             step = OptimizationStep(
                 index=step_index,

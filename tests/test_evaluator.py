@@ -10,7 +10,14 @@ import numpy as np
 
 from src.compiler.compile import CompilationResult, compile_program
 from src.optimization import demo_evaluator
-from src.optimization.evaluator import EvaluationResult, evaluate, measure_latency, outputs_match
+from src.optimization.evaluator import (
+    CandidateTimingError,
+    EvaluationResult,
+    evaluate,
+    measure_latency,
+    measure_latency_pair,
+    outputs_match,
+)
 
 
 class CorrectnessTests(unittest.TestCase):
@@ -62,6 +69,63 @@ class TimingTests(unittest.TestCase):
     def test_rejects_zero_measurements(self):
         with self.assertRaises(ValueError):
             measure_latency(lambda: None, (), repeats=0)
+        with self.assertRaises(ValueError):
+            measure_latency_pair(lambda: None, lambda: None, (), repeats=0)
+
+
+class FakeProgram:
+    """A compiled program whose every call takes a fixed time on a fake clock."""
+
+    def __init__(self, name, seconds_per_call, clock, calls):
+        self.name = name
+        self.seconds_per_call = seconds_per_call
+        self.clock = clock
+        self.calls = calls
+
+    def __call__(self):
+        self.calls.append(self.name)
+        return self
+
+    def block_until_ready(self):
+        self.clock[0] += self.seconds_per_call
+        return self
+
+
+class PairedTimingTests(unittest.TestCase):
+    def setUp(self):
+        self.clock = [0.0]
+        self.calls = []
+        self.reference = FakeProgram("reference", 0.006, self.clock, self.calls)
+        self.candidate = FakeProgram("candidate", 0.003, self.clock, self.calls)
+
+    def measure(self, repeats):
+        with patch("src.optimization.evaluator.perf_counter", side_effect=lambda: self.clock[0]):
+            return measure_latency_pair(self.reference, self.candidate, (), repeats=repeats)
+
+    def test_reports_the_median_of_each_program(self):
+        reference_ms, candidate_ms = self.measure(repeats=4)
+        self.assertAlmostEqual(reference_ms, 6.0)
+        self.assertAlmostEqual(candidate_ms, 3.0)
+
+    def test_the_program_that_goes_first_swaps_every_round(self):
+        self.measure(repeats=4)
+        warm_up, timed = self.calls[:2], self.calls[2:]
+        self.assertEqual(warm_up, ["reference", "candidate"])
+        self.assertEqual(
+            timed,
+            ["reference", "candidate", "candidate", "reference"] * 2,
+        )
+
+    def test_candidate_failure_is_named_as_the_candidates(self):
+        self.candidate.block_until_ready = Mock(side_effect=RuntimeError("out of memory"))
+        with self.assertRaisesRegex(CandidateTimingError, "RuntimeError: out of memory"):
+            self.measure(repeats=2)
+
+    def test_reference_failure_is_not_blamed_on_the_candidate(self):
+        self.reference.block_until_ready = Mock(side_effect=RuntimeError("device lost"))
+        with self.assertRaisesRegex(RuntimeError, "device lost") as raised:
+            self.measure(repeats=2)
+        self.assertNotIsInstance(raised.exception, CandidateTimingError)
 
 
 class EvaluatorTests(unittest.TestCase):
@@ -78,13 +142,13 @@ class EvaluatorTests(unittest.TestCase):
             self.assertIn(part, result.message)
 
     def test_incorrect_candidate_is_not_benchmarked(self):
-        with patch("src.optimization.evaluator.measure_latency") as timing:
+        with patch("src.optimization.evaluator.measure_latency_pair") as timing:
             result = evaluate(lambda x: x + 1, lambda x: x + 2, self.inputs)
         self.assertFailure(result, "correctness", "Numerical mismatch")
         timing.assert_not_called()
 
     def test_correct_candidate_receives_a_ratio(self):
-        with patch("src.optimization.evaluator.measure_latency", side_effect=[6.0, 3.0]):
+        with patch("src.optimization.evaluator.measure_latency_pair", return_value=(6.0, 3.0)):
             result = evaluate(lambda x: x + 1, lambda x: 1 + x, self.inputs)
         self.assertTrue(result.correct)
         self.assertEqual(result.speedup, 2.0)
@@ -107,16 +171,18 @@ class EvaluatorTests(unittest.TestCase):
             return 1 + x
 
         with patch("src.optimization.evaluator.compile_program", wraps=compile_program) as compiler:
-            def measure(executable, inputs, *, repeats):
+            def measure(reference_executable, candidate_executable, inputs, *, repeats):
                 self.assertEqual(compiler.call_count, 2)
-                return 1.0
+                return 1.0, 1.0
 
-            with patch("src.optimization.evaluator.measure_latency", side_effect=measure) as timer:
+            with patch(
+                "src.optimization.evaluator.measure_latency_pair", side_effect=measure
+            ) as timer:
                 result = evaluate(reference, candidate, self.inputs)
 
         self.assertTrue(result.correct)
         self.assertEqual(compiler.call_count, 2)
-        self.assertEqual(timer.call_count, 2)
+        self.assertEqual(timer.call_count, 1)
         reference_call, candidate_call = compiler.call_args_list
         self.assertIs(reference_call.args[0], reference)
         self.assertIs(candidate_call.args[0], candidate)
@@ -141,7 +207,7 @@ class EvaluatorTests(unittest.TestCase):
         ]
         for reference, candidate, message in cases:
             with self.subTest(message=message):
-                with patch("src.optimization.evaluator.measure_latency") as timing:
+                with patch("src.optimization.evaluator.measure_latency_pair") as timing:
                     result = evaluate(
                         reference, candidate, self.inputs, rtol=1e-4, atol=1e-7
                     )
@@ -181,15 +247,15 @@ class EvaluatorTests(unittest.TestCase):
                     "src.optimization.evaluator.compile_program",
                     side_effect=[reference, candidate],
                 ):
-                    with patch("src.optimization.evaluator.measure_latency") as timing:
+                    with patch("src.optimization.evaluator.measure_latency_pair") as timing:
                         result = evaluate(lambda x: x, lambda x: x, self.inputs)
                 self.assertFailure(result, "execute", "RuntimeError", message)
                 timing.assert_not_called()
 
     def test_candidate_benchmark_error_discards_all_timings(self):
         with patch(
-            "src.optimization.evaluator.measure_latency",
-            side_effect=[6.0, RuntimeError("timed execution failed")],
+            "src.optimization.evaluator.measure_latency_pair",
+            side_effect=CandidateTimingError("RuntimeError: timed execution failed"),
         ):
             result = evaluate(lambda x: x, lambda x: x, self.inputs)
         self.assertFailure(result, "benchmark", "RuntimeError", "timed execution failed")
@@ -226,7 +292,7 @@ class EvaluatorTests(unittest.TestCase):
 
     def test_reference_benchmark_error_propagates(self):
         with patch(
-            "src.optimization.evaluator.measure_latency",
+            "src.optimization.evaluator.measure_latency_pair",
             side_effect=RuntimeError("reference benchmark failed"),
         ):
             with self.assertRaisesRegex(RuntimeError, "reference benchmark failed"):
@@ -238,6 +304,36 @@ class EvaluatorTests(unittest.TestCase):
 
         with self.assertRaises(KeyboardInterrupt):
             evaluate(lambda x: x, candidate, self.inputs)
+
+
+class HoldoutTests(unittest.TestCase):
+    """`x * x` and `x + x` agree when every value is 2, and nowhere else."""
+
+    def setUp(self):
+        self.twos = (np.full(3, 2.0, dtype=np.float32),)
+        self.threes = (np.full(3, 3.0, dtype=np.float32),)
+
+    def test_candidate_right_only_for_the_first_input_passes_without_a_holdout(self):
+        result = evaluate(lambda x: x * x, lambda x: x + x, self.twos, repeats=1)
+        self.assertTrue(result.correct)
+
+    def test_holdout_rejects_that_candidate_before_timing(self):
+        with patch("src.optimization.evaluator.measure_latency_pair") as timing:
+            result = evaluate(
+                lambda x: x * x, lambda x: x + x, self.twos, holdout_inputs=self.threes
+            )
+        self.assertFalse(result.correct)
+        self.assertEqual(result.failure_stage, "correctness")
+        self.assertIn("On the held-out input: Numerical mismatch", result.message)
+        self.assertIsNone(result.speedup)
+        timing.assert_not_called()
+
+    def test_candidate_right_on_both_inputs_is_timed(self):
+        result = evaluate(
+            lambda x: x * 2, lambda x: x + x, self.twos, repeats=2, holdout_inputs=self.threes
+        )
+        self.assertTrue(result.correct, result.message)
+        self.assertGreater(result.speedup, 0)
 
 
 class DemoTests(unittest.TestCase):

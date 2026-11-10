@@ -11,7 +11,12 @@ import httpx
 import numpy as np
 from google.genai.errors import ClientError, ServerError
 
-from src.agent.llm_policy import GeminiPolicy, LLMUnavailableError, RETRY_WAIT_SECONDS
+from src.agent.llm_policy import (
+    GeminiPolicy,
+    LLMQuotaExhaustedError,
+    LLMUnavailableError,
+    RETRY_WAIT_SECONDS,
+)
 from src.agent.types import OptimizationStep, RewriteProposal
 from src.optimization.evaluator import EvaluationResult
 from tests.benchmark_neural_network_agent import (
@@ -92,12 +97,15 @@ class RetryTests(unittest.TestCase):
         self.assertEqual(policy._generate_with_retries("prompt"), "reply")
         self.assertEqual(models.calls, 2)
 
-    def test_used_up_daily_quota_is_not_retried(self, sleep):
+    def test_used_up_daily_quota_is_not_retried_and_is_named(self, sleep):
         policy, models = policy_with_errors([daily_quota_used_up()])
-        with self.assertRaises(ClientError):
+        with self.assertRaises(LLMQuotaExhaustedError):
             policy._generate_with_retries("prompt")
         self.assertEqual(models.calls, 1)
         sleep.assert_not_called()
+
+    def test_used_up_daily_quota_counts_as_unavailable_for_existing_callers(self, _):
+        self.assertTrue(issubclass(LLMQuotaExhaustedError, LLMUnavailableError))
 
     def test_permanent_error_is_not_retried(self, sleep):
         policy, models = policy_with_errors([bad_key()])
