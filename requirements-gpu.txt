@@ -1,4 +1,2 @@
-jax[cuda12]
-numpy
-google-genai
-python-dotenv
+-r requirements.txt
+jax[cuda12]==0.12.0.1

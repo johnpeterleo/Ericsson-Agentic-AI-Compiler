@@ -137,6 +137,44 @@ The demo uses minimal inputs. A single evaluation does not establish general
 correctness or a repeatable speedup, and peak memory is not measured. Use the
 target GPU for GPU performance comparisons.
 
+## GPU setup
+
+The GPU VM is `jax-gpu-l4` in `us-west4-a` (`g2-standard-4`, one NVIDIA L4,
+driver 580). Its environment was set up with Python 3.12 and
+`jax[cuda12]==0.12.0.1`. Use this one GPU model for all reported timings.
+
+Start the VM and connect. The start can fail if the zone has no free GPUs:
+
+```bash
+gcloud compute instances start jax-gpu-l4 --zone=us-west4-a
+gcloud compute ssh jax-gpu-l4 --zone=us-west4-a
+```
+
+The VM's system Python is too old for this version of JAX, so create the
+environment with [uv](https://docs.astral.sh/uv/) from the repository root.
+Skip this if `.venv` already exists:
+
+```bash
+uv venv --python 3.12 .venv
+uv pip install --python .venv/bin/python -r requirements-gpu.txt
+```
+
+Check that JAX compiles and runs on the GPU:
+
+```bash
+.venv/bin/python -m scripts.check_gpu
+```
+
+Stop the VM when you are done, because it is billed while running:
+
+```bash
+gcloud compute instances stop jax-gpu-l4 --zone=us-west4-a
+```
+
+Below roughly 1024x1024, `simple_program` timings are about 0.14 ms at every
+size because overhead dominates. Use workloads large enough that their timing
+grows with input size before reporting a speedup.
+
 ## Contact
 John Christensen - johnchristensen@outlook.com
 
