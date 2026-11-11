@@ -165,3 +165,18 @@ def remeasurement_record(remeasurement: Remeasurement) -> dict:
         "candidate_ms": result.candidate_ms,
         "message": result.message,
     }
+
+
+def search_record(candidates: list[Candidate], remeasurements: list[Remeasurement]) -> dict:
+    """The fields every agent's saved result shares, whichever agent produced the candidates."""
+    best = best_remeasured(remeasurements)
+    compiled = best.candidate.compiled if best else None
+    return {
+        "evaluations": len(candidates),
+        "remeasured_speedup": best.speedup if best else None,
+        "search_speedup": best.candidate.speedup if best else None,
+        "best_id": best.candidate.id if best else None,
+        "best_float_dtypes": list(compiled.float_dtypes) if compiled else None,
+        "candidates": [candidate_record(c) for c in candidates],
+        "remeasurements": [remeasurement_record(r) for r in remeasurements],
+    }

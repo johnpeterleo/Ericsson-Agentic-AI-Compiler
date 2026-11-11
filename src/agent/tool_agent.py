@@ -6,12 +6,14 @@ is sent the whole transcript every turn. When the run ends, the top correct
 candidates are re-measured on a fresh input (see `search`).
 """
 
+import logging
 from dataclasses import dataclass, field
 from time import perf_counter
 
 import jax
 
 from src.agent.actions import (
+    MAX_CANDIDATES_PER_TURN,
     ActionError,
     Workspace,
     parse_action,
@@ -27,10 +29,9 @@ from src.agent.search import (
     RemeasureSettings,
     SearchState,
     best_remeasured,
-    candidate_record,
     format_leaderboard,
     remeasure_top,
-    remeasurement_record,
+    search_record,
 )
 from src.agent.tasks import Task
 from src.agent.text_model import TextModel
@@ -40,9 +41,13 @@ from src.optimization.evaluator import measure_latency
 
 MAX_TURNS = 12
 MAX_EVALUATIONS = 16
-PATIENCE = 2
+# The spec said 2. In the first real run the model sent one candidate per turn,
+# none beat the margin, and the run stopped after 2 of its 12 turns.
+PATIENCE = 4
 IMPROVEMENT_MARGIN = 1.05
 MAX_OBSERVATION_CHARS = 8000
+
+log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -88,20 +93,13 @@ class ToolAgentRun:
         return best_remeasured(self.remeasurements)
 
     def record(self) -> dict:
-        best = self.best
         return {
             "task": self.task_name,
             "device": self.device,
             "stop_reason": self.stop_reason,
             "llm_calls": len(self.turns),
-            "evaluations": len(self.candidates),
             "wall_seconds": self.wall_seconds,
-            "remeasured_speedup": best.speedup if best else None,
-            "search_speedup": best.candidate.speedup if best else None,
-            "best_id": best.candidate.id if best else None,
-            "best_float_dtypes": list(best.candidate.compiled.float_dtypes) if best else None,
-            "candidates": [candidate_record(c) for c in self.candidates],
-            "remeasurements": [remeasurement_record(r) for r in self.remeasurements],
+            **search_record(self.candidates, self.remeasurements),
             "transcript": {
                 "opening": self.opening,
                 "turns": [vars(turn) for turn in self.turns],
@@ -124,7 +122,8 @@ def _budget_text(config):
     return (
         f"Budget: {config.max_turns} turns (one reply each), {config.max_evaluations} candidate "
         f"evaluations, and the run stops after {config.patience} evaluate turns in a row without "
-        f"a candidate that beats the best by {config.improvement_margin:.2f}x."
+        f"a candidate that beats the best by {config.improvement_margin:.2f}x. Turns are "
+        f"scarcer than evaluations: one evaluate turn can test up to {MAX_CANDIDATES_PER_TURN} candidates."
     )
 
 
@@ -190,6 +189,11 @@ class ToolAgent:
             stop_reason = self._stop_reason(workspace, progress)
             footer = self._footer(workspace, progress, stop_reason)
             progress.turns.append(Turn(reply, action_name, f"{_cap(observation)}\n\n{footer}"))
+            log.info(
+                "turn %d: %s; %d evaluations; best counted speedup %.2fx",
+                progress.turns_used, action_name or "invalid reply",
+                len(workspace.search.candidates), workspace.search.best_counted_speedup,
+            )
         candidates = workspace.search.candidates
         return ToolAgentRun(
             task_name=task.name,
