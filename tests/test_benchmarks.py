@@ -14,7 +14,7 @@ from src.benchmarks.registry import discover_programs, get_program, load_program
 from src.optimization.evaluator import evaluate
 
 EXPECTED_DEFAULT = {"matmul", "softmax", "fused_gemm_gelu_layernorm", "attention"}
-EXPECTED_OPTIONAL = {"transformer_block"}
+EXPECTED_OPTIONAL = {"transformer_block", "gpt"}
 
 
 class RegistryTests(unittest.TestCase):
