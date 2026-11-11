@@ -90,16 +90,22 @@ def lesson_request(run: ToolAgentRun, source_text: str) -> str:
 def parse_lessons(reply: str, evidence: dict) -> list[Lesson]:
     """Keep well-formed lessons; `worked` ones only when the run reached `WORKED_SPEEDUP`."""
     try:
-        entries = _extract_json_object(reply).get("lessons", [])
+        entries = _extract_json_object(reply).get("lessons")
     except ValueError:
         return []
-    allowed = set(KINDS) if evidence["speedup"] >= WORKED_SPEEDUP else {"did_not_help"}
+    if not isinstance(entries, list):
+        return []
+    allowed = KINDS if evidence["speedup"] >= WORKED_SPEEDUP else ("did_not_help",)
     lessons = [
-        Lesson(str(entry["rule"]), str(entry["when"]), entry["kind"], evidence)
+        Lesson(entry["rule"], entry["when"], entry["kind"], evidence)
         for entry in entries
-        if isinstance(entry, dict) and entry.keys() >= {"rule", "when", "kind"} and entry["kind"] in allowed
+        if _is_well_formed(entry) and entry["kind"] in allowed
     ]
     return lessons[:MAX_LESSONS_PER_RUN]
+
+
+def _is_well_formed(entry):
+    return isinstance(entry, dict) and all(isinstance(entry.get(name), str) for name in ("rule", "when", "kind"))
 
 
 def learn_from_run(model: TextModel, run: ToolAgentRun, source_text: str) -> list[Lesson]:

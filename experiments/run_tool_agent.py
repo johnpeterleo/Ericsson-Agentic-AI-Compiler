@@ -14,6 +14,7 @@ data/rewrite_memory.jsonl, which is tracked in git.
 import argparse
 import json
 import logging
+from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
 
@@ -110,17 +111,19 @@ def main(argv=None):
     run = agent.run(task, memory.lessons_text(args.memory, task.name))
     print_result(run)
 
-    learned = []
+    # Saved before the lesson request, so a failing extra request cannot lose the run.
+    path = RESULTS_DIR / f"{datetime.now():%Y%m%d-%H%M%S}-{task.name.replace(':', '-')}.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    record = {**details, "memory": args.memory, **run.record(), "lessons_learned": []}
+    path.write_text(json.dumps(record, indent=2))
+    print(f"Saved the run to {path}")
+
     if args.memory == "readwrite":
         learned = memory.learn_from_run(model, run, task.source_text)
         memory.append_lessons(learned)
+        record["lessons_learned"] = [asdict(lesson) for lesson in learned]
+        path.write_text(json.dumps(record, indent=2))
         print(f"Stored {len(learned)} lessons in {memory.MEMORY_PATH}")
-
-    path = RESULTS_DIR / f"{datetime.now():%Y%m%d-%H%M%S}-{task.name.replace(':', '-')}.json"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    record = {**details, "memory": args.memory, **run.record(), "lessons_learned": [vars(l) for l in learned]}
-    path.write_text(json.dumps(record, indent=2))
-    print(f"Saved the run to {path}")
 
 
 if __name__ == "__main__":

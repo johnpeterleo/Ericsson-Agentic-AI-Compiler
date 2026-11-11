@@ -70,8 +70,14 @@ class SelectionTests(unittest.TestCase):
         self.assertEqual(kinds, ["did_not_help"])
 
     def test_malformed_lessons_are_dropped(self):
-        reply = json.dumps({"lessons": [{"rule": "no when"}, {"rule": "r", "when": "w", "kind": "maybe"}]})
-        self.assertEqual(parse_lessons(reply, {"speedup": 2.0}), [])
+        replies = [
+            json.dumps({"lessons": [{"rule": "no when"}, {"rule": "r", "when": "w", "kind": "maybe"}]}),
+            json.dumps({"lessons": [{"rule": "r", "when": "w", "kind": []}]}),
+            json.dumps({"lessons": None}),
+        ]
+        for reply in replies:
+            with self.subTest(reply=reply):
+                self.assertEqual(parse_lessons(reply, {"speedup": 2.0}), [])
 
 
 class LearningTests(unittest.TestCase):

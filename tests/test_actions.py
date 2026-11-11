@@ -2,6 +2,8 @@
 
 import json
 import unittest
+from dataclasses import replace
+from unittest.mock import patch
 
 from src.agent.actions import (
     ActionError,
@@ -13,6 +15,7 @@ from src.agent.actions import (
 )
 from src.agent.feedback import summarize_compiled
 from src.agent.search import EvaluationSettings, SearchState
+from src.compiler.compile_time_limit import CompileTimeoutError
 from tests.tool_agent_fakes import DOUBLING, WRONG, action, tiny_task
 
 IMPROVEMENT_MARGIN = 1.05
@@ -76,6 +79,13 @@ class ObservationTests(unittest.TestCase):
         observation = run_inspect(parse_action(action("inspect", code=code)), self.workspace)
 
         self.assertIn("Could not compile it", observation)
+
+    def test_inspect_respects_the_compile_time_limit(self):
+        self.workspace.settings = replace(self.workspace.settings, compile_time_limit=1.0)
+        with patch("src.agent.actions.check_compile_time", side_effect=CompileTimeoutError("too slow")):
+            observation = run_inspect(parse_action(action("inspect", code=DOUBLING)), self.workspace)
+
+        self.assertIn("Could not compile it: CompileTimeoutError: too slow", observation)
 
     def test_time_reports_the_probe_and_the_reference(self):
         code = "def probe(x):\n    return x + 1"

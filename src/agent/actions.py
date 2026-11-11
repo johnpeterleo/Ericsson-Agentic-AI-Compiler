@@ -103,6 +103,11 @@ def _error_text(error: Exception) -> str:
     return f"{type(error).__name__}: {error}"[:MAX_FAILURE_MESSAGE_CHARS]
 
 
+def _check_compile_time(function, device_inputs, workspace):
+    if workspace.settings.compile_time_limit is not None:
+        check_compile_time(function, device_inputs, workspace.settings.compile_time_limit)
+
+
 def _inspect_target(action, workspace):
     """Return a label and the function to inspect."""
     if "code" in action.fields:
@@ -119,6 +124,7 @@ def _inspect_target(action, workspace):
 def run_inspect(action: Action, workspace: Workspace) -> str:
     try:
         label, function = _inspect_target(action, workspace)
+        _check_compile_time(function, workspace.task.inputs, workspace)
         summary = summarize_compiled(function, workspace.task.inputs)
     except ActionError:
         raise
@@ -132,8 +138,7 @@ def run_inspect(action: Action, workspace: Workspace) -> str:
 
 def _time_probe(probe, workspace):
     device_inputs = jax.block_until_ready(jax.device_put(workspace.task.inputs))
-    if workspace.settings.compile_time_limit is not None:
-        check_compile_time(probe, device_inputs, workspace.settings.compile_time_limit)
+    _check_compile_time(probe, device_inputs, workspace)
     reference = compile_program(workspace.task.reference, device_inputs).executable
     compiled_probe = compile_program(probe, device_inputs).executable
     return measure_latency_pair(reference, compiled_probe, device_inputs, repeats=workspace.settings.repeats)

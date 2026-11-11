@@ -86,7 +86,11 @@ def _mismatch_details(reference, candidate, rtol, atol):
     """
     reference = reference.astype(np.float64)
     candidate = candidate.astype(np.float64)
-    error_ratio = np.abs(candidate - reference) / (atol + rtol * np.abs(reference))
+    error = np.abs(candidate - reference)
+    allowed = atol + rtol * np.abs(reference)
+    # With atol=0 a zero reference allows no error: equal values are fine, any difference is infinitely far.
+    with np.errstate(divide="ignore", invalid="ignore"):
+        error_ratio = np.where(error == 0, 0.0, error / allowed)
     outside = int(np.count_nonzero(error_ratio > 1))
     worst = np.unravel_index(np.argmax(error_ratio), error_ratio.shape)
     worst_index = tuple(int(position) for position in worst)

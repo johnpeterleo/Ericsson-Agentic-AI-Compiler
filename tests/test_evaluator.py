@@ -148,6 +148,14 @@ class EvaluatorTests(unittest.TestCase):
         self.assertIn("2 of 2 elements (100.0%) are outside the tolerance", result.message)
         self.assertIn("Worst element at index (0,): expected -1, got 0.", result.message)
 
+    def test_zero_atol_reports_an_exact_zero_as_matching(self):
+        reference = lambda x: x * 0
+        inputs = (np.array([1.0, 2.0], dtype=np.float32),)
+        result = evaluate(reference, lambda x: x * np.array([0.0, 1.0], dtype=np.float32), inputs, rtol=1e-5, atol=0)
+
+        self.assertIn("The largest error is inf times the allowed error", result.message)
+        self.assertIn("Worst element at index (1,): expected 0, got 2.", result.message)
+
     def test_incorrect_candidate_is_not_benchmarked(self):
         with patch("src.optimization.evaluator.measure_latency_pair") as timing:
             result = evaluate(lambda x: x + 1, lambda x: x + 2, self.inputs)
