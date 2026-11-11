@@ -189,7 +189,7 @@ class GeminiPolicy:
             )
         return self._client
 
-    def _generate_with_retries(self, user_text: str):
+    def _generate_with_retries(self, user_text: str, system_prompt: str = SYSTEM_PROMPT):
         """Call Gemini, waiting and retrying when the error is temporary.
 
         A request that takes longer than ``REQUEST_TIMEOUT_MS`` counts as temporary.
@@ -203,7 +203,7 @@ class GeminiPolicy:
         final_attempt = None
         for wait_seconds in (*RETRY_WAIT_SECONDS, final_attempt):
             try:
-                return self._generate(client, user_text)
+                return self._generate(client, user_text, system_prompt)
             except (APIError, TransportError) as error:
                 if _is_daily_quota_error(error):
                     raise LLMQuotaExhaustedError(
@@ -218,12 +218,17 @@ class GeminiPolicy:
                 print(f"Gemini {_describe_error(error)}; retrying in {wait_seconds} s")
                 time.sleep(wait_seconds)
 
-    def _generate(self, client, user_text: str):
+    def _generate(self, client, user_text: str, system_prompt: str):
         return client.models.generate_content(
             model=self.model,
             contents=user_text,
-            config={"system_instruction": SYSTEM_PROMPT},
+            config={"system_instruction": system_prompt},
         )
+
+    def ask(self, system_prompt: str, user_text: str) -> str:
+        """Send one prompt with any system prompt and return the reply text."""
+        response = self._generate_with_retries(user_text, system_prompt)
+        return getattr(response, "text", None) or str(response)
 
     def propose(self, context: AgentContext) -> RewriteProposal:
         """Ask Gemini for the next rewrite.
@@ -287,13 +292,13 @@ class ClaudeCLIPolicy:
         self.model = model
         self.executable = executable
 
-    def _command(self) -> list[str]:
+    def _command(self, system_prompt: str = SYSTEM_PROMPT) -> list[str]:
         return [
             self.executable,
             "--print",
             "--model", self.model,
             "--tools", "",
-            "--system-prompt", SYSTEM_PROMPT,
+            "--system-prompt", system_prompt,
             "--output-format", "json",
             "--no-session-persistence",
             "--strict-mcp-config",
@@ -301,12 +306,12 @@ class ClaudeCLIPolicy:
             "--setting-sources", "",
         ]
 
-    def _ask(self, user_text: str) -> str:
+    def _ask(self, user_text: str, system_prompt: str = SYSTEM_PROMPT) -> str:
         """Send one prompt and return Claude's reply text."""
         try:
             # Run outside the repository so the CLI does not read its project files.
             completed = subprocess.run(
-                self._command(),
+                self._command(system_prompt),
                 input=user_text,
                 capture_output=True,
                 text=True,
@@ -331,6 +336,10 @@ class ClaudeCLIPolicy:
 
     def propose(self, context: AgentContext) -> RewriteProposal:
         return proposal_from_reply(self._ask(build_user_text(context)))
+
+    def ask(self, system_prompt: str, user_text: str) -> str:
+        """Send one prompt with any system prompt and return the reply text."""
+        return self._ask(user_text, system_prompt)
 
 
 def create_default_policy(

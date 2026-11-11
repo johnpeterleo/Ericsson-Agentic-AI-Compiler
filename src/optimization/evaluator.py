@@ -71,8 +71,31 @@ def _output_mismatch_reason(reference_output, candidate_output, *, rtol=1e-5, at
         return f"Nonfinite values in {' and '.join(nonfinite_outputs)} output(s)."
 
     if not np.allclose(candidate, reference, rtol=rtol, atol=atol):
-        return f"Numerical mismatch: values differ beyond rtol={rtol}, atol={atol}."
+        return (
+            f"Numerical mismatch: values differ beyond rtol={rtol}, atol={atol}. "
+            f"{_mismatch_details(reference, candidate, rtol, atol)}"
+        )
     return None
+
+
+def _mismatch_details(reference, candidate, rtol, atol):
+    """How wrong the candidate is, in units of the allowed error.
+
+    A candidate at 1.3 times the allowed error usually has a rounding or
+    summation-order problem; one at 10,000 times computes something else.
+    """
+    reference = reference.astype(np.float64)
+    candidate = candidate.astype(np.float64)
+    error_ratio = np.abs(candidate - reference) / (atol + rtol * np.abs(reference))
+    outside = int(np.count_nonzero(error_ratio > 1))
+    worst = np.unravel_index(np.argmax(error_ratio), error_ratio.shape)
+    worst_index = tuple(int(position) for position in worst)
+    return (
+        f"The largest error is {error_ratio[worst]:.3g} times the allowed error; "
+        f"{outside} of {error_ratio.size} elements ({outside / error_ratio.size:.1%}) "
+        f"are outside the tolerance. Worst element at index {worst_index}: "
+        f"expected {reference[worst]:.6g}, got {candidate[worst]:.6g}."
+    )
 
 
 def outputs_match(reference_output, candidate_output, *, rtol=1e-5, atol=1e-6):

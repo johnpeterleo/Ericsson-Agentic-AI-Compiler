@@ -141,6 +141,13 @@ class EvaluatorTests(unittest.TestCase):
         for part in message_parts:
             self.assertIn(part, result.message)
 
+    def test_numerical_mismatch_says_how_wrong_the_candidate_is(self):
+        result = evaluate(lambda x: x, lambda x: x + 1, self.inputs, rtol=1e-4, atol=1e-7)
+
+        self.assertIn("The largest error is 9.99e+03 times the allowed error", result.message)
+        self.assertIn("2 of 2 elements (100.0%) are outside the tolerance", result.message)
+        self.assertIn("Worst element at index (0,): expected -1, got 0.", result.message)
+
     def test_incorrect_candidate_is_not_benchmarked(self):
         with patch("src.optimization.evaluator.measure_latency_pair") as timing:
             result = evaluate(lambda x: x + 1, lambda x: x + 2, self.inputs)
