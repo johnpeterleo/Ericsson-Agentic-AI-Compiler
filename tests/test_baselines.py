@@ -13,12 +13,16 @@ from src.agent.baselines import (
     run_single,
 )
 from src.agent.llm_policy import build_user_text
+from src.agent.prompts import SYSTEM_PROMPT
+from src.agent.tool_prompts import FAIR_BASELINE_PROMPT
 from src.agent.search import EvaluationSettings, RemeasureSettings
 from src.agent.tasks import load_task
 from src.agent.types import AgentContext, HLOSnapshot, ProfileReport
 from tests.tool_agent_fakes import DOUBLING, WRONG, ScriptedModel, tiny_task
 
-SETTINGS = ArmSettings(EvaluationSettings(repeats=1, compile_time_limit=None), RemeasureSettings(repeats=1))
+SETTINGS = ArmSettings(
+    EvaluationSettings(repeats=1, compile_time_limit=None), RemeasureSettings(repeats=1), FAIR_BASELINE_PROMPT
+)
 
 
 def old_reply(source):
@@ -41,9 +45,16 @@ class BaselineTests(unittest.TestCase):
             baseline_evaluation=None,
         )
         model = ScriptedModel([old_reply(DOUBLING)])
-        TaskSourcePolicy(model, task.source_text).propose(context)
+        TaskSourcePolicy(model, task.source_text, SYSTEM_PROMPT).propose(context)
 
         self.assertEqual(model.prompts, [build_user_text(context)])
+
+    def test_the_fair_arms_send_the_fair_system_prompt(self):
+        model = ScriptedModel([old_reply(DOUBLING)])
+        run_single(BaselineRunner(model, tiny_task(), SETTINGS))
+
+        self.assertEqual(model.system_prompts, [FAIR_BASELINE_PROMPT])
+        self.assertNotIn("inspect_compilation", FAIR_BASELINE_PROMPT)
 
     def test_single_makes_one_call_and_remeasures_its_candidate(self):
         record = run_single(runner_replying([old_reply(DOUBLING)])).record()

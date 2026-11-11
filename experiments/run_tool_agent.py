@@ -23,7 +23,7 @@ import jax
 from src.agent import memory
 from src.agent.search import EvaluationSettings, RemeasureSettings
 from src.agent.tasks import SIZES, load_task
-from src.agent.text_model import PROVIDERS, create_text_model
+from src.agent.text_model import PROVIDERS, create_text_model, model_details
 from src.agent.tool_agent import ToolAgent, ToolAgentConfig
 from src.compiler.compile_time_limit import COMPILE_TIME_LIMIT_SECONDS
 
@@ -65,15 +65,15 @@ def tool_agent_config(args, max_turns):
     )
 
 
-def run_details(args):
-    """What every saved record says about how it was produced."""
+def run_details(args, model):
+    """What every saved record says about how it was produced, including the model actually used."""
     device = jax.devices()[0]
     return {
         "device": f"{device.platform} ({device.device_kind})",
         "matmul_precision": jax.config.jax_default_matmul_precision or "default",
         "size": args.size,
         "provider": args.model,
-        "model_name": args.model_name,
+        **model_details(model),
         "repeats": args.repeats,
         "remeasure_repeats": args.remeasure_repeats,
         "started": datetime.now().isoformat(timespec="seconds"),
@@ -104,8 +104,9 @@ def main(argv=None):
     args = parse_arguments(argv)
     task = load_task(args.task, args.size)
     model = create_text_model(args.model, args.model_name)
-    details = run_details(args)
+    details = run_details(args, model)
     print(f"Device: {details['device']}; matmul precision: {details['matmul_precision']}")
+    print(f"Model: {details['model_name']}")
 
     agent = ToolAgent(model, tool_agent_config(args, args.max_turns))
     run = agent.run(task, memory.lessons_text(args.memory, task.name))

@@ -53,10 +53,14 @@ def evaluate_action(*codes):
 class ScriptedModel:
     """Returns the queued replies in order and keeps every prompt it was sent."""
 
+    model = "scripted-model"
+
     def __init__(self, replies):
         self.replies = list(replies)
         self.prompts = []
+        self.system_prompts = []
 
     def ask(self, system_prompt, user_text):
+        self.system_prompts.append(system_prompt)
         self.prompts.append(user_text)
         return self.replies.pop(0)

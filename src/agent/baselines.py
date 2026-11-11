@@ -4,11 +4,12 @@
 the existing agent with N attempts. Their candidates go through the same final
 re-measurement as the tool agent's (see `search.remeasure_top`).
 
-The baselines send the existing prompt and system prompt. The only difference
-from `GeminiPolicy.propose` is the source shown: the task's visible source, so
-that a `data/programs/` reference comes with the helpers and constants it uses.
-For suite programs that source is `inspect.getsource(reference)`, so the prompt
-is the same one the November runs sent.
+The baselines send the existing user prompt (`format_context_for_llm`) with
+the task's visible source, so that a `data/programs/` reference comes with the
+helpers and constants it uses. The system prompt is a setting: the fair one
+(`FAIR_BASELINE_PROMPT`) or the November one (`SYSTEM_PROMPT`). With the
+November one, a suite program gets exactly the prompt the November runs sent,
+because its visible source is `inspect.getsource(reference)`.
 """
 
 from dataclasses import dataclass
@@ -17,7 +18,6 @@ from time import perf_counter
 from src.agent.agent import AgentConfig, OptimizationAgent
 from src.agent.feedback import summarize_compiled
 from src.agent.llm_policy import format_context_for_llm, proposal_from_reply
-from src.agent.prompts import SYSTEM_PROMPT
 from src.agent.search import (
     Candidate,
     EvaluationSettings,
@@ -36,19 +36,21 @@ from src.agent.types import AgentContext, RewriteProposal
 class TaskSourcePolicy:
     """The existing policy's prompt and reply format, sent through a text model."""
 
-    def __init__(self, model, source_text: str):
+    def __init__(self, model, source_text: str, system_prompt: str):
         self.model = model
         self.source_text = source_text
+        self.system_prompt = system_prompt
 
     def propose(self, context: AgentContext) -> RewriteProposal:
         prompt = format_context_for_llm(context, reference_source=self.source_text)
-        return proposal_from_reply(self.model.ask(SYSTEM_PROMPT, prompt))
+        return proposal_from_reply(self.model.ask(self.system_prompt, prompt))
 
 
 @dataclass(frozen=True)
 class ArmSettings:
     evaluation: EvaluationSettings
     remeasure: RemeasureSettings
+    system_prompt: str
 
 
 @dataclass
@@ -104,7 +106,7 @@ class BaselineRunner:
                 rtol=self.task.rtol,
                 atol=self.task.atol,
             ),
-            policy=TaskSourcePolicy(self.model, self.task.source_text),
+            policy=TaskSourcePolicy(self.model, self.task.source_text, self.settings.system_prompt),
             config=AgentConfig(
                 max_iterations=attempts,
                 benchmark_repeats=repeats,

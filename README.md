@@ -204,7 +204,11 @@ Every observation ends with a leaderboard and the budget left (12 turns, 16
 evaluations; the run also stops after 4 evaluate turns without a 5% gain).
 At the end the top 3 candidates are timed again, with 50 repeats, on an input
 the search never saw; that re-measured speedup is the result. It works on the
-programs in `data/programs/` (by name) and on the suite (`suite:<name>`).
+programs in `data/programs/` (by name), on the suite (`suite:<name>`), and on
+the planted programs (`planted:<name>`, `src/benchmarks/planted.py`): realistic
+programs that each hide three inefficiencies, from a Python loop over heads to
+a sort used to find a maximum, with the clean version as the expert. One call
+may fix some of them; finding all of them takes measuring.
 
 ```bash
 python -m experiments.run_tool_agent --task transformer_block --size small --model claude
@@ -214,11 +218,15 @@ python -m experiments.compare_agents --tasks softmax,suite:prefix_sums --calls 4
 `--model claude` uses the logged-in Claude Code CLI, `--model codex` the
 logged-in Codex CLI (default `gpt-6-luna`, medium reasoning, read-only in an
 empty folder), and `--model gemini` needs `GEMINI_API_KEY`. `--model-name`
-picks another model. `compare_agents` runs four arms at the same number of LLM
+picks another model. `compare_agents` runs five arms at the same number of LLM
 calls: one call to the existing agent, best of N independent calls, the
-existing agent with N attempts, and the tool agent. Single runs are saved to
-`artifacts/tool-agent-runs/`, comparisons to `artifacts/agent-comparisons/`
-(one JSON line per task, arm and repetition, with the full transcript).
+existing agent with N attempts, the same with the November system prompt
+(`chain_original`), and the tool agent. The first three use a fair system
+prompt that, unlike the November one, does not describe tools the baseline
+lacks. Single runs are saved to `artifacts/tool-agent-runs/`, comparisons to
+`artifacts/agent-comparisons/` (one JSON line per task, arm and repetition,
+with the model name, its reasoning effort where it has one, and the full
+transcript).
 With `--memory readwrite`, a run that found a correct candidate asks for a
 lesson and adds it to `data/rewrite_memory.jsonl`; later runs on other tasks
 see the stored lessons. Memory is off by default.

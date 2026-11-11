@@ -14,7 +14,7 @@ from src.agent.llm_policy import (
     LLMUnavailableError,
 )
 from src.agent.prompts import SYSTEM_PROMPT
-from src.agent.text_model import CodexCLIModel, RecordingModel, create_text_model
+from src.agent.text_model import CodexCLIModel, RecordingModel, create_text_model, model_details
 from tests.tool_agent_fakes import ScriptedModel
 
 OTHER_PROMPT = "You are a different agent."
@@ -111,6 +111,12 @@ class TextModelTests(unittest.TestCase):
 
         self.assertEqual(model.calls, 2)
         self.assertEqual(model.exchanges[1], {"prompt": "b", "reply": "second"})
+
+    def test_model_details_name_the_model_and_any_reasoning_effort(self):
+        self.assertEqual(model_details(CodexCLIModel(model="gpt-6-luna")),
+                         {"model_name": "gpt-6-luna", "reasoning_effort": "medium"})
+        self.assertEqual(model_details(ClaudeCLIPolicy(model="claude-sonnet-5-5")),
+                         {"model_name": "claude-sonnet-5-5", "reasoning_effort": None})
 
     def test_unknown_provider_is_rejected(self):
         with self.assertRaises(ValueError):

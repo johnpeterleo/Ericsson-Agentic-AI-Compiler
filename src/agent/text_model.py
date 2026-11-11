@@ -66,12 +66,13 @@ class CodexCLIModel:
     def __init__(self, model: str = DEFAULT_CODEX_MODEL, executable: str = "codex"):
         self.model = model
         self.executable = executable
+        self.reasoning_effort = CODEX_REASONING_EFFORT
 
     def _command(self, folder: str, reply_path: Path) -> list[str]:
         return [
             self.executable, "exec",
             "--model", self.model,
-            "--config", f'model_reasoning_effort="{CODEX_REASONING_EFFORT}"',
+            "--config", f'model_reasoning_effort="{self.reasoning_effort}"',
             "--sandbox", "read-only",
             "--cd", folder,
             "--skip-git-repo-check",
@@ -102,6 +103,11 @@ class CodexCLIModel:
                 raise LLMQuotaExhaustedError(f"Codex usage limit reached: {details}")
             raise LLMUnavailableError(f"Codex CLI failed: {details}")
         return reply
+
+
+def model_details(model: TextModel) -> dict:
+    """The resolved model name, and the reasoning effort where the provider has one."""
+    return {"model_name": model.model, "reasoning_effort": getattr(model, "reasoning_effort", None)}
 
 
 def create_text_model(provider: str, model_name: str | None = None) -> TextModel:
