@@ -1,8 +1,10 @@
 """One task format for both program sets, so the agent does not care where a program came from.
 
-Suite programs (`src.benchmarks.programs`) are named `suite:<name>`; programs
-in `data/programs/` (`src.benchmarks.registry`) use their plain name. Both sets
-have an `attention`, so the prefix keeps the names apart.
+Suite programs (`src.benchmarks.programs`) are named `suite:<name>`, programs
+with planted inefficiencies (`src.benchmarks.planted`) `planted:<name>`, and
+programs in `data/programs/` (`src.benchmarks.registry`) use their plain name.
+Both the suite and `data/programs/` have an `attention`, so the prefixes keep
+the names apart.
 """
 
 import ast
@@ -12,16 +14,18 @@ from typing import Callable
 
 import numpy as np
 
+from src.benchmarks import planted
 from src.benchmarks import programs as suite
 from src.benchmarks import registry
 
 SUITE_PREFIX = "suite:"
+PLANTED_PREFIX = "planted:"
 SIZES = ("small", "default")
 INPUT_SEED = 2026
 HOLDOUT_SEED = 2027
 # The final re-measurement uses a third input case that the search never saw.
 REMEASURE_SEED = 2028
-# Suite programs are checked with these; their inputs are positive and small.
+# Suite and planted programs are checked with these.
 SUITE_RTOL = 1e-5
 SUITE_ATOL = 1e-6
 # Only used to build inputs and check the port; the model must not see them.
@@ -50,12 +54,14 @@ def _suite_size(program: suite.BenchmarkProgram, size: str) -> int:
     return program.test_size if size == "small" else program.benchmark_size
 
 
-def task_from_suite(program: suite.BenchmarkProgram, size: str) -> Task:
+def task_from_suite(program: suite.BenchmarkProgram, prefix: str, size: str) -> Task:
+    """A program with an expert, from the suite or the planted set; `prefix` names the set."""
+
     def inputs_for(seed):
         return program.make_inputs(np.random.default_rng(seed), _suite_size(program, size))
 
     return Task(
-        name=SUITE_PREFIX + program.name,
+        name=prefix + program.name,
         reference=program.reference,
         source_text=inspect.getsource(program.reference),
         inputs=inputs_for(INPUT_SEED),
@@ -96,14 +102,20 @@ def task_from_registry(program: registry.BenchmarkProgram, size: str) -> Task:
     )
 
 
+_PROGRAM_SETS = ((SUITE_PREFIX, suite.PROGRAMS_BY_NAME), (PLANTED_PREFIX, planted.PLANTED_BY_NAME))
+
+
 def load_task(name: str, size: str) -> Task:
     if size not in SIZES:
         raise ValueError(f"Unknown size {size!r}; choose from {SIZES}.")
-    if name.startswith(SUITE_PREFIX):
-        return task_from_suite(suite.PROGRAMS_BY_NAME[name.removeprefix(SUITE_PREFIX)], size)
+    for prefix, programs in _PROGRAM_SETS:
+        if name.startswith(prefix):
+            return task_from_suite(programs[name.removeprefix(prefix)], prefix, size)
     return task_from_registry(registry.get_program(name), size)
 
 
 def task_names() -> list[str]:
-    registry_names = list(registry.discover_programs(include_optional=True))
-    return registry_names + [SUITE_PREFIX + name for name in suite.PROGRAMS_BY_NAME]
+    names = list(registry.discover_programs(include_optional=True))
+    for prefix, programs in _PROGRAM_SETS:
+        names.extend(prefix + name for name in programs)
+    return names
