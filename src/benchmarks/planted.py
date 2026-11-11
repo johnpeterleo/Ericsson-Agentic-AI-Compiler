@@ -82,7 +82,10 @@ def embed_and_transform(token_ids, table, gamma, beta, w_in, w_out):
 
 
 def embed_and_transform_expert(token_ids, table, gamma, beta, w_in, w_out):
-    tokens = table[token_ids]
+    vocabulary = table.shape[0]
+    # A one-hot row is all zeros for an id outside the table; a plain gather would wrap or clip it.
+    in_table = (token_ids >= 0) & (token_ids < vocabulary)
+    tokens = jnp.where(in_table[:, None], table[jnp.clip(token_ids, 0, vocabulary - 1)], 0.0)
     centered = tokens - jnp.mean(tokens, axis=-1, keepdims=True)
     spread = jnp.sqrt(jnp.mean(centered**2, axis=-1, keepdims=True) + 1e-5)
     normalized = centered / spread * gamma + beta
