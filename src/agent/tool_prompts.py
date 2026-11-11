@@ -20,6 +20,7 @@ How to use the turns well:
 Rules for code:
 - It runs in a namespace that holds only `jax` and `jnp` (jax.numpy). Define every helper and constant you use in your code. You may import other parts of jax.
 - Keep float32 arithmetic. Do not compute in bfloat16 or float16, even where the tolerance would allow it. Return the reference's shape and dtype.
+- Compute the same function. Do not swap in an approximation (such as the tanh form of an exact GELU) that only passes because the tolerance is loose.
 - Pure JAX only: no side effects and no NumPy on traced values. The code is compiled with jax.jit.
 
 Reply with exactly one JSON object and nothing else, for example:
