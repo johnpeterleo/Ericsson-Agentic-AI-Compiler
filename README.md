@@ -211,8 +211,10 @@ python -m experiments.run_tool_agent --task transformer_block --size small --mod
 python -m experiments.compare_agents --tasks softmax,suite:prefix_sums --calls 4
 ```
 
-`--model claude` uses the logged-in Claude Code CLI; `--model gemini` needs
-`GEMINI_API_KEY`. `compare_agents` runs four arms at the same number of LLM
+`--model claude` uses the logged-in Claude Code CLI, `--model codex` the
+logged-in Codex CLI (default `gpt-6-luna`, medium reasoning, read-only in an
+empty folder), and `--model gemini` needs `GEMINI_API_KEY`. `--model-name`
+picks another model. `compare_agents` runs four arms at the same number of LLM
 calls: one call to the existing agent, best of N independent calls, the
 existing agent with N attempts, and the tool agent. Single runs are saved to
 `artifacts/tool-agent-runs/`, comparisons to `artifacts/agent-comparisons/`

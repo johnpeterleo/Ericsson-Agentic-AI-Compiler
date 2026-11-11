@@ -1,14 +1,20 @@
-"""Both policies can be asked with another system prompt; `propose` still sends the old one."""
+"""The text models: any system prompt can be sent, and `propose` still sends the old one."""
 
 import json
 import subprocess
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from src.agent.llm_policy import ClaudeCLIPolicy, GeminiPolicy
+from src.agent.llm_policy import (
+    ClaudeCLIPolicy,
+    GeminiPolicy,
+    LLMQuotaExhaustedError,
+    LLMUnavailableError,
+)
 from src.agent.prompts import SYSTEM_PROMPT
-from src.agent.text_model import RecordingModel, create_text_model
+from src.agent.text_model import CodexCLIModel, RecordingModel, create_text_model
 from tests.tool_agent_fakes import ScriptedModel
 
 OTHER_PROMPT = "You are a different agent."
@@ -26,6 +32,46 @@ class FakeModels:
 def cli_result(text):
     stdout = json.dumps({"type": "result", "is_error": False, "result": text})
     return subprocess.CompletedProcess(args=[], returncode=0, stdout=stdout, stderr="")
+
+
+def fake_codex(reply, returncode=0, stderr=""):
+    """Stands in for `subprocess.run`: writes `reply` where Codex writes its last message."""
+
+    def run(command, **_):
+        if reply is not None:
+            Path(command[command.index("--output-last-message") + 1]).write_text(reply)
+        return subprocess.CompletedProcess(args=command, returncode=returncode, stdout="", stderr=stderr)
+
+    return run
+
+
+class CodexTests(unittest.TestCase):
+    def test_ask_returns_the_last_message_and_sends_both_prompts(self):
+        with patch("src.agent.text_model.subprocess.run", side_effect=fake_codex("the reply")) as run:
+            reply = CodexCLIModel().ask(OTHER_PROMPT, "hello")
+        message = run.call_args.kwargs["input"]
+
+        self.assertEqual(reply, "the reply")
+        self.assertLess(message.index(OTHER_PROMPT), message.index("hello"))
+
+    def test_command_is_read_only_and_ignores_the_user_config(self):
+        command = CodexCLIModel(model="gpt-6-luna")._command("/tmp/empty", Path("/tmp/empty/reply.txt"))
+
+        self.assertEqual(command[command.index("--sandbox") + 1], "read-only")
+        self.assertEqual(command[command.index("--model") + 1], "gpt-6-luna")
+        self.assertIn("--ignore-user-config", command)
+
+    def test_failure_and_usage_limit_raise_llm_errors(self):
+        cases = [
+            (fake_codex(None, returncode=1, stderr="model_not_found"), LLMUnavailableError),
+            (fake_codex(None, returncode=1, stderr="You've hit your usage limit"), LLMQuotaExhaustedError),
+            (fake_codex("   "), LLMUnavailableError),
+        ]
+        for fake, error in cases:
+            with self.subTest(error=error.__name__):
+                with patch("src.agent.text_model.subprocess.run", side_effect=fake):
+                    with self.assertRaises(error):
+                        CodexCLIModel().ask(OTHER_PROMPT, "hello")
 
 
 class TextModelTests(unittest.TestCase):
