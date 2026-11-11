@@ -171,11 +171,11 @@ def _failure_text(result):
     return f"rejected at {result.failure_stage}. {message}"
 
 
-def _success_text(candidate, improved, workspace):
+def _success_text(candidate, workspace):
     result = candidate.result
     search = workspace.search
     verdict = (
-        "new best" if improved
+        "new best" if candidate.id in search.improvement_ids
         else f"not better than the best ({search.best_counted_speedup:.2f}x) "
         f"by the required margin of {search.margin:.2f}x"
     )
@@ -192,9 +192,9 @@ def run_evaluate(specs: list[dict], workspace: Workspace) -> str:
     lines = []
     for spec in specs:
         candidate = _evaluate_spec(spec, workspace)
-        improved = workspace.search.add(candidate)
+        workspace.search.add(candidate)
         outcome = (
-            _success_text(candidate, improved, workspace) if candidate.result.correct
+            _success_text(candidate, workspace) if candidate.result.correct
             else _failure_text(candidate.result)
         )
         lines.append(f"{candidate.id} ({candidate.idea}): {outcome}")

@@ -186,6 +186,41 @@ table lists the expert speedup, the agent's best speedup, the agent's share of
 the expert speedup, and the first attempt that reached 70% of it. Results are
 saved to `artifacts/suite-runs/`.
 
+### Tool agent
+
+The agent above is a fixed pipeline: one prompt per attempt, and the script
+decides what is measured and when to stop. The tool agent
+(`src/agent/tool_agent.py`, design in `docs/tool-agent-spec.md`) lets the
+model choose. Each turn it sends one action as JSON and gets an observation:
+
+| Action | What the harness does |
+|---|---|
+| `inspect` | Compiles a candidate or the reference and returns the launched operations, XLA's FLOP and byte estimates, the start of the optimized HLO, and a diff against the reference |
+| `time` | Times any function of the inputs (`probe`) next to the whole reference, with no correctness check, to find where the time goes |
+| `evaluate` | Checks and times 1 to 4 candidates. A wrong one reports how far outside the tolerance it was, and where |
+| `finish` | Ends the run |
+
+Every observation ends with a leaderboard and the budget left (12 turns, 16
+evaluations; the run also stops after 4 evaluate turns without a 5% gain).
+At the end the top 3 candidates are timed again, with 50 repeats, on an input
+the search never saw; that re-measured speedup is the result. It works on the
+programs in `data/programs/` (by name) and on the suite (`suite:<name>`).
+
+```bash
+python -m experiments.run_tool_agent --task transformer_block --size small --model claude
+python -m experiments.compare_agents --tasks softmax,suite:prefix_sums --calls 4
+```
+
+`--model claude` uses the logged-in Claude Code CLI; `--model gemini` needs
+`GEMINI_API_KEY`. `compare_agents` runs four arms at the same number of LLM
+calls: one call to the existing agent, best of N independent calls, the
+existing agent with N attempts, and the tool agent. Single runs are saved to
+`artifacts/tool-agent-runs/`, comparisons to `artifacts/agent-comparisons/`
+(one JSON line per task, arm and repetition, with the full transcript).
+With `--memory readwrite`, a run that found a correct candidate asks for a
+lesson and adds it to `data/rewrite_memory.jsonl`; later runs on other tasks
+see the stored lessons. Memory is off by default.
+
 ## GPU setup
 
 The GPU VM is `jax-gpu-l4` in `us-west4-a` (`g2-standard-4`, one NVIDIA L4,

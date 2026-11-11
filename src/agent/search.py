@@ -69,6 +69,7 @@ class SearchState:
         self.margin = margin
         self.candidates: list[Candidate] = []
         self.best_counted_speedup = REFERENCE_SPEEDUP
+        self.improvement_ids: list[str] = []
 
     def next_id(self) -> str:
         return f"c{len(self.candidates) + 1}"
@@ -76,14 +77,13 @@ class SearchState:
     def find(self, candidate_id: str) -> Candidate | None:
         return next((c for c in self.candidates if c.id == candidate_id), None)
 
-    def add(self, candidate: Candidate) -> bool:
-        """Store the candidate; return whether it counts as an improvement."""
+    def add(self, candidate: Candidate) -> None:
+        """Store the candidate, and note it if it counts as an improvement."""
         self.candidates.append(candidate)
         speedup = candidate.speedup
-        if speedup is None or speedup <= self.best_counted_speedup * self.margin:
-            return False
-        self.best_counted_speedup = speedup
-        return True
+        if speedup is not None and speedup > self.best_counted_speedup * self.margin:
+            self.best_counted_speedup = speedup
+            self.improvement_ids.append(candidate.id)
 
 
 def ranked(candidates: list[Candidate]) -> list[Candidate]:
