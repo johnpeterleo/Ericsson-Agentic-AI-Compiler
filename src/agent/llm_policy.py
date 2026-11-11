@@ -16,7 +16,7 @@ from src.agent.agent import DemoPolicy, OptimizationPolicy, format_step_summary
 from src.agent.prompts import SYSTEM_PROMPT
 from src.agent.types import AgentContext, JaxFn, RewriteProposal
 
-DEFAULT_GEMINI_MODEL = "gemini-2.0-flash"
+DEFAULT_GEMINI_MODEL = "gemini-3.8-flash"
 MAX_HLO_CHARS = 4000
 
 
@@ -84,14 +84,14 @@ class GeminiPolicy:
         self,
         *,
         api_key: str | None = None,
-        model: str = DEFAULT_GEMINI_MODEL,
+        model: str | None = None,
     ):
         self.api_key = api_key or os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
         if not self.api_key:
             raise ValueError(
                 "Set GEMINI_API_KEY (free key from https://aistudio.google.com/apikey)."
             )
-        self.model = model
+        self.model = model or os.environ.get("GEMINI_MODEL") or DEFAULT_GEMINI_MODEL
         self._client = None
 
     def _client_lazy(self):
