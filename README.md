@@ -6,7 +6,7 @@ Running large AI models is one of the dominant costs in the industry, so every p
 
 In this project, an agentic system was built that supplements a compiler to make AI models faster. Given a model or algorithm written in JAX, the array-computation and program-transformation language used by leading AI labs, which runs the same code on different hardware. The agent works in an iterative loop around the XLA compiler: it inspects the lowered program and its runtime profile, proposes high-level rewrites of the JAX code, suggests and implements custom kernels, recompiles, and analyzes the resulting performance to decide the next step. Language models do not always know much about a given accelerator or about compiler behavior, so part of the task was to give the agent the right context and feedback signals: profiling data, compiler intermediate representations (HLO/StableHLO), and correctness checks.
 
-**Project goals:** build an agentic optimization loop around JAX/XL Athat iteratively rewrites code, proposes kernels, and profiles the result; demonstrate on a set of models/algorithms that the agent produces a measurably faster program than vanilla XLA compilation while preserving correctness; gradually grow from simple optimizations to full model rewrites.
+**Project goals:** build an agentic optimization loop around JAX/XLA that iteratively rewrites code, proposes kernels, and profiles the result; demonstrate on a set of models/algorithms that the agent produces a measurably faster program than vanilla XLA compilation while preserving correctness; gradually grow from simple optimizations to full model rewrites.
 
 
 
@@ -24,10 +24,11 @@ Ericsson-Agentic-AI-Compiler/
 │   ├── benchmarks/
 │   ├── compiler/
 │   ├── profiling/
-│   └── optimization/
+│   ├── optimization/
+│   └── benchmarks/      # program registry, baseline runner, agent runner
 │
 └── data/
-    └── programs/
+    └── programs/        # one JAX benchmark program per file
 ```
 
 ## Project Setup
@@ -222,6 +223,52 @@ gcloud compute instances stop jax-gpu-l4 --zone=us-west4-a
 Below roughly 1024x1024, `simple_program` timings are about 0.14 ms at every
 size because overhead dominates. Use workloads large enough that their timing
 grows with input size before reporting a speedup.
+
+### Benchmark programs
+
+The agent is evaluated on programs modelled on KernelBench, chosen to cover
+different computational characteristics. Each lives in its own file in
+`data/programs/`:
+
+| Program | Level | Characteristic | Why it is in the set |
+| --- | --- | --- | --- |
+| `matmul` | 1 | compute-bound | Control case: XLA calls cuBLAS, so large wins are unlikely |
+| `softmax` | 1 | memory-bound reduction | Fewer passes over memory (online softmax, fused kernel) |
+| `fused_gemm_gelu_layernorm` | 2 | GEMM + elementwise + reduction | Fusion beyond what XLA already does |
+| `attention` | 3 | quadratic memory at long sequences | FlashAttention-style rewrite that XLA cannot find |
+| `transformer_block` (optional) | 3 | full model block | Rewrites across operator boundaries |
+
+Every program file defines `reference(*inputs)` (the pure JAX ground truth),
+`numpy_reference(*inputs)` (an independent float64 version used to verify the
+JAX port), `make_inputs(seed, size)` (deterministic float32 inputs), the
+sizes `small` (tests/CPU), `default` and `large` (GPU), and the `RTOL`/`ATOL`
+tolerances used for correctness checks. Matmul-based programs use `1e-2`
+because float32 matmuls may run in TF32 on NVIDIA GPUs. To add a program,
+copy an existing file; it is discovered automatically
+(see `src/benchmarks/registry.py` for the full contract).
+
+Collect vanilla-XLA baselines (run on the target GPU; baselines are only
+comparable on the same device):
+
+```bash
+python -m src.benchmarks.baseline                     # all programs, default size
+python -m src.benchmarks.baseline --size small        # quick check on CPU
+python -m src.benchmarks.baseline --include-optional --repeats 100
+```
+
+This checks each JAX port against NumPy for several seeds, then records median
+latency and spread, cold compile time, FLOPs and bytes from XLA's cost
+analysis, buffer sizes, and the StableHLO/optimized HLO. Results are written
+to `artifacts/baselines/<backend>_<device>_<size>_<timestamp>/` as
+`summary.json` and `summary.csv`.
+
+Run the agent on one program (Gemini if `GEMINI_API_KEY` is set, `--demo` for
+the scripted policy); the program's own tolerances are used and the run is
+saved to `artifacts/agent_runs/`:
+
+```bash
+python -m src.benchmarks.run_agent --program softmax --size small
+```
 
 ## Contact
 John Christensen - johnchristensen@outlook.com

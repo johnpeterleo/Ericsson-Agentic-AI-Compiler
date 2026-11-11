@@ -119,6 +119,8 @@ def evaluate_candidate(
 class AgentToolkit:
     profiler: Profiler
     profile_repeats: int = 20
+    rtol: float = 1e-5
+    atol: float = 1e-6
 
     def inspect_compilation(self, fn: JaxFn, inputs: InputTuple) -> HLOSnapshot:
         return lower_to_hlo_text(fn, inputs)
@@ -141,6 +143,8 @@ class AgentToolkit:
             candidate_fn,
             inputs,
             repeats=repeats if repeats is not None else self.profile_repeats,
+            rtol=self.rtol,
+            atol=self.atol,
             holdout_inputs=holdout_inputs,
             compile_time_limit=compile_time_limit,
         )
