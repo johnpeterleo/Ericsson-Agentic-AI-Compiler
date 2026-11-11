@@ -272,13 +272,13 @@ def _matrix_polynomial_times_vector_inputs(rng, size):
     return weights / weights.sum(axis=1, keepdims=True), _positive(rng, size)
 
 
-# Benchmark sizes were chosen on an NVIDIA L4 (artifacts/gpu-sizes/sweep.jsonl):
-# the smallest size tried at which the expert takes at least 0.7 ms, five times
-# the GPU's fixed cost per call (about 0.14 ms). Below that, the measured
-# speedup mostly reflects that fixed cost. The experts of
-# kronecker_product_times_vector and embed_tokens stay near 0.2 ms at every
-# size that fits in memory, so those two use the largest size tried.
-# The sizes of the last four programs are provisional: not yet measured on the L4.
+# Benchmark sizes were chosen on an NVIDIA L4 (results/2026-11-10-gpu/ and
+# results/2026-11-11-gpu/): the smallest size tried at which the expert takes at
+# least 0.7 ms, five times the GPU's fixed cost per call (about 0.14 ms). Below
+# that, the measured speedup mostly reflects that fixed cost. The experts of
+# kronecker_product_times_vector, embed_tokens and
+# low_rank_plus_diagonal_times_vectors stay near 0.2 ms at every size tried,
+# so those use the largest size tried.
 PROGRAMS = (
     BenchmarkProgram(
         reference=matrix_chain_times_vector,
@@ -365,7 +365,7 @@ PROGRAMS = (
         expert=circulant_times_vectors_expert,
         rewrite="the matrix is circulant: multiply with FFTs",
         make_inputs=_circulant_times_vectors_inputs,
-        benchmark_size=2048,
+        benchmark_size=4096,
         test_size=8,
     ),
     BenchmarkProgram(
@@ -373,7 +373,7 @@ PROGRAMS = (
         expert=low_rank_plus_diagonal_times_vectors_expert,
         rewrite="never build the matrix; multiply the thin factors first",
         make_inputs=_low_rank_plus_diagonal_times_vectors_inputs,
-        benchmark_size=4096,
+        benchmark_size=8192,
         test_size=8,
     ),
     BenchmarkProgram(
@@ -381,7 +381,7 @@ PROGRAMS = (
         expert=matrix_polynomial_times_vector_expert,
         rewrite="Horner's rule with matrix-vector products only",
         make_inputs=_matrix_polynomial_times_vector_inputs,
-        benchmark_size=2048,
+        benchmark_size=4096,
         test_size=8,
     ),
 )
