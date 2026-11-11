@@ -1,4 +1,4 @@
-"""LLM optimization policy (Google Gemini free tier via AI Studio API key)."""
+"""LLM optimization policies: Gemini via an API key, or Claude via the Claude Code CLI."""
 
 from __future__ import annotations
 
@@ -6,6 +6,8 @@ import inspect
 import json
 import os
 import re
+import subprocess
+import tempfile
 import time
 from pathlib import Path
 from typing import Any, Sequence
@@ -18,6 +20,7 @@ from src.agent.prompts import SYSTEM_PROMPT
 from src.agent.types import AgentContext, JaxFn, OptimizationStep, RewriteProposal
 
 DEFAULT_GEMINI_MODEL = "gemini-3.8-flash"
+DEFAULT_CLAUDE_MODEL = "claude-sonnet-5-5"
 MAX_HLO_CHARS = 4000
 MAX_FAILURE_MESSAGE_CHARS = 1000
 REQUEST_TIMEOUT_MS = 120_000
@@ -228,41 +231,106 @@ class GeminiPolicy:
         A reply that cannot be used comes back with ``load_error`` set. The agent
         shows that error to Gemini on the next attempt instead of ending the run.
         """
-        reference_source = None
-        try:
-            reference_source = inspect.getsource(context.reference_fn)
-        except (OSError, TypeError):
-            reference_source = "# source unavailable (built-in or lambda)"
-        user_text = format_context_for_llm(context, reference_source=reference_source)
-        response = self._generate_with_retries(user_text)
-        raw_text = getattr(response, "text", None) or str(response)
-        try:
-            payload = _extract_json_object(raw_text)
-        except ValueError as error:
-            return RewriteProposal(
-                rationale="", load_error=f"The reply was not the requested JSON object: {error}"
-            )
-        rationale = str(payload.get("rationale", ""))
-        if payload.get("stop"):
-            return RewriteProposal(rationale=rationale or "LLM requested stop.", stop=True)
-        source = str(payload.get("candidate_source") or "")
-        if not source.strip():
-            return RewriteProposal(
-                rationale=rationale, load_error="The reply had no candidate_source."
-            )
-        try:
-            candidate_fn = _load_candidate_from_source(source)
-        except Exception as error:
-            return RewriteProposal(
-                rationale=rationale,
-                metadata={"candidate_source": source},
-                load_error=f"{type(error).__name__}: {error}",
-            )
+        response = self._generate_with_retries(build_user_text(context))
+        return proposal_from_reply(getattr(response, "text", None) or str(response))
+
+
+def build_user_text(context: AgentContext) -> str:
+    """The prompt every LLM policy sends, so all models see the same information."""
+    try:
+        reference_source = inspect.getsource(context.reference_fn)
+    except (OSError, TypeError):
+        reference_source = "# source unavailable (built-in or lambda)"
+    return format_context_for_llm(context, reference_source=reference_source)
+
+
+def proposal_from_reply(raw_text: str) -> RewriteProposal:
+    """Turn a model's JSON reply into a proposal, or a ``load_error`` the agent can show it."""
+    try:
+        payload = _extract_json_object(raw_text)
+    except ValueError as error:
+        return RewriteProposal(
+            rationale="", load_error=f"The reply was not the requested JSON object: {error}"
+        )
+    rationale = str(payload.get("rationale", ""))
+    if payload.get("stop"):
+        return RewriteProposal(rationale=rationale or "LLM requested stop.", stop=True)
+    source = str(payload.get("candidate_source") or "")
+    if not source.strip():
+        return RewriteProposal(
+            rationale=rationale, load_error="The reply had no candidate_source."
+        )
+    try:
+        candidate_fn = _load_candidate_from_source(source)
+    except Exception as error:
         return RewriteProposal(
             rationale=rationale,
-            candidate_fn=candidate_fn,
             metadata={"candidate_source": source},
+            load_error=f"{type(error).__name__}: {error}",
         )
+    return RewriteProposal(
+        rationale=rationale,
+        candidate_fn=candidate_fn,
+        metadata={"candidate_source": source},
+    )
+
+
+class ClaudeCLIPolicy:
+    """Asks Claude for the next rewrite through the Claude Code CLI (``claude -p``).
+
+    This uses the logged-in Claude subscription instead of an API key. Claude's
+    tools are turned off, so it only answers with text: every candidate is still
+    compiled, checked, and timed by this project's evaluator, exactly like Gemini's.
+    """
+
+    def __init__(self, *, model: str = DEFAULT_CLAUDE_MODEL, executable: str = "claude"):
+        self.model = model
+        self.executable = executable
+
+    def _command(self) -> list[str]:
+        return [
+            self.executable,
+            "--print",
+            "--model", self.model,
+            "--tools", "",
+            "--system-prompt", SYSTEM_PROMPT,
+            "--output-format", "json",
+            "--no-session-persistence",
+            "--strict-mcp-config",
+            "--disable-slash-commands",
+            "--setting-sources", "",
+        ]
+
+    def _ask(self, user_text: str) -> str:
+        """Send one prompt and return Claude's reply text."""
+        try:
+            # Run outside the repository so the CLI does not read its project files.
+            completed = subprocess.run(
+                self._command(),
+                input=user_text,
+                capture_output=True,
+                text=True,
+                timeout=REQUEST_TIMEOUT_MS / 1000,
+                cwd=tempfile.gettempdir(),
+            )
+        except subprocess.TimeoutExpired as error:
+            raise LLMUnavailableError(f"Claude did not answer within {error.timeout:.0f} s") from error
+        except FileNotFoundError as error:
+            raise LLMUnavailableError(f"{self.executable!r} is not installed") from error
+
+        try:
+            reply = json.loads(completed.stdout)
+        except json.JSONDecodeError:
+            reply = {"is_error": True, "result": completed.stderr or completed.stdout}
+        message = str(reply.get("result") or "")
+        if reply.get("is_error") or completed.returncode != 0:
+            if "limit" in message.lower():
+                raise LLMQuotaExhaustedError(f"Claude usage limit reached: {message[:300]}")
+            raise LLMUnavailableError(f"Claude CLI failed: {message[:300]}")
+        return message
+
+    def propose(self, context: AgentContext) -> RewriteProposal:
+        return proposal_from_reply(self._ask(build_user_text(context)))
 
 
 def create_default_policy(
