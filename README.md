@@ -206,9 +206,10 @@ At the end the top 3 candidates are timed again, with 50 repeats, on an input
 the search never saw; that re-measured speedup is the result. It works on the
 programs in `data/programs/` (by name), on the suite (`suite:<name>`), and on
 the planted programs (`planted:<name>`, `src/benchmarks/planted.py`): realistic
-programs that each hide three inefficiencies, from a Python loop over heads to
-a sort used to find a maximum, with the clean version as the expert. One call
-may fix some of them; finding all of them takes measuring.
+programs that each hide three inefficiencies, such as a sequential `lax.map`
+or a sort used to find a maximum, with the clean version as the expert. On the
+L4 no single fix gives more than 6x, while all of them together give 5.6x to
+85x, so finding all of them takes measuring.
 
 ```bash
 python -m experiments.run_tool_agent --task transformer_block --size small --model claude
