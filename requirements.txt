@@ -4,3 +4,5 @@ google-genai
 python-dotenv
 # Needed by jax.export, which the compile time limit uses.
 flatbuffers
+# Imported directly by the Gemini retry logic (src/agent/llm_policy.py).
+httpx

@@ -1,4 +1,13 @@
-"""LLM optimization policies: Gemini via an API key, or Claude via the Claude Code CLI."""
+"""LLM optimization policies: Gemini, any OpenAI-compatible endpoint, or the Claude Code CLI.
+
+All three send the same prompt (``build_user_text``) and are judged by the same
+evaluator, so the choice only changes which model answers.
+
+The Gemini free tier has two limits that matter here: the daily request quota is
+counted *per model*, and an overloaded model answers 503/504 (which still count
+against that quota). ``GeminiPolicy`` therefore walks a chain of models instead
+of spending every retry, and every request, on one busy model.
+"""
 
 from __future__ import annotations
 
@@ -12,6 +21,7 @@ import time
 from pathlib import Path
 from typing import Any, Sequence
 
+import httpx
 import jax
 import jax.numpy as jnp
 
@@ -20,13 +30,29 @@ from src.agent.prompts import SYSTEM_PROMPT
 from src.agent.types import AgentContext, JaxFn, OptimizationStep, RewriteProposal
 
 DEFAULT_GEMINI_MODEL = "gemini-3.8-flash"
+# The daily quota is per model, so the second model is a second quota; it is also
+# a different serving pool, which is what a 503/504 is complaining about.
+FALLBACK_GEMINI_MODELS = ("gemini-3.6-flash",)
 DEFAULT_CLAUDE_MODEL = "claude-sonnet-5-5"
+
+# Free OpenAI-compatible endpoints. None of these need a paid plan; each is one
+# environment variable away, and each has its own quota that Gemini's does not share.
+# The model id has no safe default (providers rename them often), so pass --model
+# or list what the endpoint offers with: python -m src.agent.llm_policy groq
+PROVIDER_PRESETS: dict[str, tuple[str, str | None]] = {
+    "groq": ("https://api.groq.com/openai/v1", "GROQ_API_KEY"),
+    "openrouter": ("https://openrouter.ai/api/v1", "OPENROUTER_API_KEY"),
+    "github": ("https://models.github.ai/inference", "GITHUB_TOKEN"),
+    "ollama": ("http://localhost:11434/v1", None),
+}
 MAX_HLO_CHARS = 4000
 MAX_FAILURE_MESSAGE_CHARS = 1000
 REQUEST_TIMEOUT_MS = 120_000
 RETRY_WAIT_SECONDS = (30, 60, 120, 240)
 HTTP_TOO_MANY_REQUESTS = 429
 HTTP_SERVER_ERROR_START = 500
+HTTP_SERVICE_UNAVAILABLE = 503
+HTTP_GATEWAY_TIMEOUT = 504
 
 
 class LLMUnavailableError(RuntimeError):
@@ -56,6 +82,11 @@ def _is_temporary_error(error) -> bool:
 def _describe_error(error) -> str:
     code = getattr(error, "code", None)
     return f"status {code}" if code is not None else type(error).__name__
+
+
+def _is_overloaded(error) -> bool:
+    """503/504 come from Google's gateway, not from the prompt: try another model."""
+    return getattr(error, "code", None) in (HTTP_SERVICE_UNAVAILABLE, HTTP_GATEWAY_TIMEOUT)
 
 
 def load_project_env() -> None:
@@ -159,20 +190,36 @@ def format_context_for_llm(context: AgentContext, *, reference_source: str | Non
 
 
 class GeminiPolicy:
-    """Calls Gemini (free tier with AI Studio key) to propose the next rewrite."""
+    """Calls Gemini (free tier with AI Studio key) to propose the next rewrite.
+
+    ``model`` is tried first. When it says it is overloaded (503/504) or its daily
+    quota is gone, the policy moves on to the next name in ``fallback_models``
+    instead of retrying the same model: on the free tier the quota is per model,
+    so each name is a fresh 20 requests per day.
+
+    A model that has failed once in this run is not asked again, which keeps a
+    busy endpoint from eating the requests that a working model could answer.
+    """
 
     def __init__(
         self,
         *,
         api_key: str | None = None,
         model: str | None = None,
+        fallback_models: Sequence[str] | None = None,
     ):
         self.api_key = api_key or os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
         if not self.api_key:
             raise ValueError(
                 "Set GEMINI_API_KEY (free key from https://aistudio.google.com/apikey)."
             )
-        self.model = model or os.environ.get("GEMINI_MODEL") or DEFAULT_GEMINI_MODEL
+        first = model or os.environ.get("GEMINI_MODEL") or DEFAULT_GEMINI_MODEL
+        fallbacks = (
+            FALLBACK_GEMINI_MODELS if fallback_models is None else tuple(fallback_models)
+        )
+        # Names are deduplicated so a repeated model cannot be asked twice.
+        self.models = tuple(dict.fromkeys(name for name in (first, *fallbacks) if name))
+        self.model = self.models[0]
         self._client = None
 
     def _client_lazy(self):
@@ -190,40 +237,74 @@ class GeminiPolicy:
         return self._client
 
     def _generate_with_retries(self, user_text: str):
-        """Call Gemini, waiting and retrying when the error is temporary.
+        """Ask each model in turn until one answers.
 
-        A request that takes longer than ``REQUEST_TIMEOUT_MS`` counts as temporary.
-        Permanent errors, such as a bad key, are raised immediately. A used-up
-        daily quota is raised as ``LLMQuotaExhaustedError`` so callers can stop cleanly.
+        A request that takes longer than ``REQUEST_TIMEOUT_MS`` counts as temporary,
+        but a retry of the same model only pays off for 429 (a per-minute limit that
+        clears) and for network errors. A 503/504 means that model's serving pool is
+        overloaded, so the next model is tried instead of waiting on the same one.
+
+        A model whose daily quota is gone, or which keeps failing, is removed from
+        ``self.models`` for the rest of the run. ``LLMQuotaExhaustedError`` is only
+        raised once every model is out of quota, because that is when no request can
+        succeed until the quota resets.
         """
         from google.genai.errors import APIError
         from httpx import TransportError
 
         client = self._client_lazy()
-        final_attempt = None
-        for wait_seconds in (*RETRY_WAIT_SECONDS, final_attempt):
+        exhausted: list[str] = []
+        last_error = None
+        for name in list(self.models):
+            reply, error = self._ask_one_model(client, name, user_text, APIError, TransportError)
+            if error is None:
+                self.model = name
+                return reply
+            last_error = error
+            if _is_daily_quota_error(error):
+                exhausted.append(name)
+                print(f"Gemini daily quota is used up for {name}; trying the next model")
+            elif not _is_temporary_error(error):
+                raise error
+            else:
+                print(f"Gemini {_describe_error(error)} from {name}; trying the next model")
+            self.models = tuple(other for other in self.models if other != name)
+
+        tried = len(exhausted) + len(self.models)
+        if exhausted and not self.models:
+            raise LLMQuotaExhaustedError(
+                f"Gemini daily quota is used up for every model tried ({', '.join(exhausted)})"
+            ) from last_error
+        raise LLMUnavailableError(
+            f"Gemini was unavailable for every model tried ({tried}): "
+            f"{_describe_error(last_error)}"
+        ) from last_error
+
+    def _ask_one_model(self, client, name: str, user_text: str, api_error, transport_error):
+        """Ask one model, retrying only the errors that a retry can fix.
+
+        Returns ``(reply, None)`` on success, or ``(None, error)`` with the last
+        error so the caller can decide whether to try a different model.
+        """
+        for wait_seconds in (*RETRY_WAIT_SECONDS, None):
             try:
-                return self._generate(client, user_text)
-            except (APIError, TransportError) as error:
-                if _is_daily_quota_error(error):
-                    raise LLMQuotaExhaustedError(
-                        f"Gemini daily quota is used up for {self.model}"
-                    ) from error
-                if not _is_temporary_error(error):
-                    raise
-                if wait_seconds is final_attempt:
-                    raise LLMUnavailableError(
-                        f"Gemini failed every retry ({_describe_error(error)})"
-                    ) from error
-                print(f"Gemini {_describe_error(error)}; retrying in {wait_seconds} s")
+                return self._generate(client, name, user_text), None
+            except (api_error, transport_error) as error:
+                if _is_daily_quota_error(error) or not _is_temporary_error(error):
+                    return None, error
+                if _is_overloaded(error) or wait_seconds is None:
+                    return None, error
+                print(f"Gemini {_describe_error(error)}; retrying {name} in {wait_seconds} s")
                 time.sleep(wait_seconds)
 
-    def _generate(self, client, user_text: str):
+    def _generate(self, client, model: str, user_text: str):
         return client.models.generate_content(
-            model=self.model,
+            model=model,
             contents=user_text,
             config={"system_instruction": SYSTEM_PROMPT},
         )
+
+
 
     def propose(self, context: AgentContext) -> RewriteProposal:
         """Ask Gemini for the next rewrite.
@@ -233,6 +314,191 @@ class GeminiPolicy:
         """
         response = self._generate_with_retries(build_user_text(context))
         return proposal_from_reply(getattr(response, "text", None) or str(response))
+
+
+class OpenAICompatiblePolicy:
+    """Asks any OpenAI-compatible chat endpoint, using only ``httpx``.
+
+    This exists because a single provider's free tier can be busy or used up for
+    days. All of these offer a free tier and speak the same API, so one policy
+    covers them:
+
+    ============  ===============================  ===============================
+    provider      base URL                         key in
+    ============  ===============================  ===============================
+    groq          https://api.groq.com/openai/v1   ``GROQ_API_KEY``
+    openrouter    https://openrouter.ai/api/v1    ``OPENROUTER_API_KEY``
+    github        https://models.github.ai/inference ``GITHUB_TOKEN``
+    ollama        http://localhost:11434/v1       key not needed
+    ============  ===============================  ===============================
+
+    Pass ``provider="groq"`` to use a preset, or ``base_url`` for anything else.
+    The model id is required because providers rename models often; list what an
+    endpoint offers with ``python -m src.agent.llm_policy groq``.
+    """
+
+    def __init__(
+        self,
+        *,
+        model: str,
+        provider: str | None = None,
+        base_url: str | None = None,
+        api_key: str | None = None,
+        timeout_seconds: float = REQUEST_TIMEOUT_MS / 1000,
+    ):
+        if provider and provider not in PROVIDER_PRESETS:
+            raise ValueError(
+                f"unknown provider {provider!r}; choose from: {', '.join(PROVIDER_PRESETS)}"
+            )
+        preset_url, preset_key = PROVIDER_PRESETS.get(provider, (None, None))
+        self.base_url = (base_url or preset_url or "").rstrip("/")
+        if not self.base_url:
+            raise ValueError(
+                "Pass provider= (groq, openrouter, github, ollama) or an explicit base_url."
+            )
+        self.api_key = api_key or (os.environ.get(preset_key) if preset_key else None)
+        if not self.api_key and provider != "ollama" and not self.base_url.startswith("http://localhost"):
+            raise ValueError(
+                f"{provider or self.base_url} needs an API key; set {preset_key} or pass api_key=."
+            )
+        self.model = model
+        self.provider = provider or self.base_url
+        self.timeout_seconds = timeout_seconds
+
+    def _headers(self) -> dict[str, str]:
+        headers = {"Content-Type": "application/json"}
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+        if self.provider == "openrouter":
+            # OpenRouter attributes free-tier usage with these; they are optional.
+            headers["HTTP-Referer"] = "https://github.com/Ericsson-Agentic-AI-Compiler"
+            headers["X-Title"] = "Ericsson Agentic AI Compiler"
+        return headers
+
+    def _post(self, user_text: str):
+        """The raw HTTP response for one chat request."""
+        payload = {
+            "model": self.model,
+            "messages": [
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": user_text},
+            ],
+            "temperature": 0.2,
+        }
+        try:
+            return httpx.post(
+                f"{self.base_url}/chat/completions",
+                headers=self._headers(),
+                json=payload,
+                timeout=self.timeout_seconds,
+            )
+        except httpx.TransportError as error:
+            raise LLMUnavailableError(f"{self.provider} request failed: {error}") from error
+
+    def _ask(self, user_text: str) -> str:
+        """One chat request, retrying a per-minute limit like the Gemini policy does.
+
+        A used-up daily quota is raised as ``LLMQuotaExhaustedError`` so the suite
+        can stop cleanly; anything else is ``LLMUnavailableError`` and the suite
+        moves on to the next program.
+        """
+        for wait_seconds in (*RETRY_WAIT_SECONDS, None):
+            response = self._post(user_text)
+            if response.status_code != HTTP_TOO_MANY_REQUESTS:
+                break
+            body = _response_message(response)
+            if _is_daily_quota_error(SimpleApiError(response.status_code, body)):
+                raise LLMQuotaExhaustedError(f"{self.provider} daily quota used up: {body[:300]}")
+            if wait_seconds is None:
+                raise LLMUnavailableError(f"{self.provider} rate limited: {body[:300]}")
+            print(f"{self.provider} rate limited; retrying in {wait_seconds} s")
+            time.sleep(wait_seconds)
+
+        if response.status_code >= HTTP_SERVER_ERROR_START:
+            raise LLMUnavailableError(
+                f"{self.provider} status {response.status_code}: "
+                f"{_response_message(response)[:300]}"
+            )
+        if response.status_code >= 400:
+            raise LLMUnavailableError(
+                f"{self.provider} rejected the request (status {response.status_code}): "
+                f"{_response_message(response)[:300]}"
+            )
+        try:
+            reply = response.json()
+            return reply["choices"][0]["message"]["content"]
+        except (json.JSONDecodeError, KeyError, IndexError, TypeError) as error:
+            raise LLMUnavailableError(
+                f"{self.provider} reply was not a chat completion: {response.text[:300]}"
+            ) from error
+
+    def propose(self, context: AgentContext) -> RewriteProposal:
+        return proposal_from_reply(self._ask(build_user_text(context)))
+
+    def list_models(self) -> list[str]:
+        """The model ids this endpoint offers, to fill in ``--model``."""
+        response = httpx.get(
+            f"{self.base_url}/models", headers=self._headers(), timeout=self.timeout_seconds
+        )
+        response.raise_for_status()
+        return sorted(item["id"] for item in response.json().get("data", []))
+
+
+class SimpleApiError:
+    """Just enough of an API error for ``_is_daily_quota_error`` to read its message."""
+
+    def __init__(self, code: int, message: str):
+        self.code = code
+        self.message = message
+
+
+def _response_message(response) -> str:
+    """The readable part of an error body, whichever shape the endpoint uses."""
+    try:
+        body = response.json()
+    except (json.JSONDecodeError, TypeError):
+        return response.text
+    if isinstance(body, dict):
+        error = body.get("error")
+        if isinstance(error, dict):
+            return str(error.get("message") or error)
+        if error:
+            return str(error)
+        return str(body.get("message") or body)
+    return str(body)
+
+
+def create_default_policy(
+    *,
+    demo_candidates: Sequence[JaxFn] | None = None,
+    prefer_llm: bool = True,
+) -> OptimizationPolicy:
+    """Use whichever free LLM is configured, or fall back to ``DemoPolicy``.
+
+    Order: ``LLM_PROVIDER``+``LLM_MODEL`` (any OpenAI-compatible endpoint), then
+    Gemini (which rotates models on its own), then the scripted ``DemoPolicy``.
+    """
+    load_project_env()
+    if prefer_llm:
+        provider_policy = _policy_from_environment()
+        if provider_policy is not None:
+            return provider_policy
+        if os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY"):
+            return GeminiPolicy()
+    return DemoPolicy(candidates=demo_candidates)
+
+
+def _policy_from_environment() -> OptimizationPolicy | None:
+    """An ``OpenAICompatiblePolicy`` from ``LLM_PROVIDER``/``LLM_MODEL``, if both are set."""
+    provider = os.environ.get("LLM_PROVIDER")
+    model = os.environ.get("LLM_MODEL")
+    if not (provider and model):
+        return None
+    return OpenAICompatiblePolicy(
+        model=model,
+        provider=provider if provider in PROVIDER_PRESETS else None,
+        base_url=None if provider in PROVIDER_PRESETS else provider,
+    )
 
 
 def build_user_text(context: AgentContext) -> str:
@@ -333,15 +599,50 @@ class ClaudeCLIPolicy:
         return proposal_from_reply(self._ask(build_user_text(context)))
 
 
-def create_default_policy(
-    *,
-    demo_candidates: Sequence[JaxFn] | None = None,
-    prefer_llm: bool = True,
-) -> OptimizationPolicy:
-    """Use Gemini when an API key is set; otherwise fall back to ``DemoPolicy``."""
+def _command_line(argv: Sequence[str] | None = None) -> int:
+    """Check a free provider without running a benchmark.
+
+        python -m src.agent.llm_policy groq            # list that provider's models
+        python -m src.agent.llm_policy groq MODEL      # send one real request
+        python -m src.agent.llm_policy gemini          # show the model fallback chain
+    """
+    import argparse
+
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("provider", help="gemini, claude, or a key from PROVIDER_PRESETS")
+    parser.add_argument("model", nargs="?", help="model id; omitted means list the models")
+    arguments = parser.parse_args(argv)
+
     load_project_env()
-    if prefer_llm and (
-        os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
-    ):
-        return GeminiPolicy()
-    return DemoPolicy(candidates=demo_candidates)
+    try:
+        if arguments.provider == "gemini":
+            policy = GeminiPolicy(model=arguments.model)
+            print(f"Gemini models are tried in this order: {list(policy.models)}")
+            if arguments.model is None:
+                return 0
+            reply = policy._generate_with_retries("Reply with the single word: ready")
+        elif arguments.provider == "claude":
+            policy = ClaudeCLIPolicy(model=arguments.model or DEFAULT_CLAUDE_MODEL)
+            if arguments.model is None:
+                print(f"Claude via the CLI; default model is {DEFAULT_CLAUDE_MODEL}")
+                return 0
+            reply = policy._ask("Reply with the single word: ready")
+        elif arguments.model is None:
+            policy = OpenAICompatiblePolicy(provider=arguments.provider, model="unused")
+            for name in policy.list_models():
+                print(name)
+            return 0
+        else:
+            policy = OpenAICompatiblePolicy(provider=arguments.provider, model=arguments.model)
+            reply = policy._ask("Reply with the single word: ready")
+    except (LLMUnavailableError, ValueError) as error:
+        print(f"failed: {error}")
+        return 1
+    print(f"ok from {policy.model}: {str(reply).strip()[:200]}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(_command_line())
+
+

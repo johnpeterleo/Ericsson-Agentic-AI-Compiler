@@ -47,55 +47,67 @@ def bad_key():
 
 
 class FakeModels:
-    """Raises each queued error in turn, then returns a fixed reply."""
+    """Raises each queued error in turn, then returns a fixed reply.
 
-    def __init__(self, errors):
+    The queued errors are per model *name*, so a test can make one model busy and
+    check that the next one is asked instead of the same one again.
+    """
+
+    def __init__(self, errors, *, per_model=None):
         self.errors = list(errors)
+        self.per_model = per_model or {}
         self.calls = 0
+        self.asked: list[str] = []
 
-    def generate_content(self, **_):
+    def generate_content(self, **kwargs):
         self.calls += 1
+        name = kwargs.get("model")
+        self.asked.append(name)
+        queue = self.per_model.get(name)
+        if queue:
+            raise queue.pop(0)
         if self.errors:
             raise self.errors.pop(0)
-        return "reply"
+        return f"reply from {name}"
 
 
-def policy_with_errors(errors):
-    policy = GeminiPolicy(api_key="not-a-real-key")
-    models = FakeModels(errors)
+def policy_with_errors(errors, *, fallback_models=(), **kwargs):
+    policy = GeminiPolicy(
+        api_key="not-a-real-key", model="primary", fallback_models=fallback_models
+    )
+    models = FakeModels(errors, **kwargs)
     policy._client = SimpleNamespace(models=models)
     return policy, models
 
 
 @patch("src.agent.llm_policy.time.sleep")
 class RetryTests(unittest.TestCase):
-    def test_temporary_error_is_retried_until_success(self, sleep):
-        policy, models = policy_with_errors([overloaded(), overloaded()])
-        self.assertEqual(policy._generate_with_retries("prompt"), "reply")
-        self.assertEqual(models.calls, 3)
-        self.assertEqual(sleep.call_count, 2)
+    """A per-minute limit or a network error is retried; a busy model is swapped."""
 
-    def test_succeeds_on_the_final_attempt(self, _):
-        policy, _models = policy_with_errors([overloaded()] * len(RETRY_WAIT_SECONDS))
-        self.assertEqual(policy._generate_with_retries("prompt"), "reply")
+    def test_per_minute_rate_limit_is_retried_on_the_same_model(self, sleep):
+        policy, models = policy_with_errors([rate_limited()])
+        self.assertTrue(policy._generate_with_retries("prompt").startswith("reply"))
+        self.assertEqual(models.calls, 2)
+        self.assertEqual(set(models.asked), {"primary"})
+        sleep.assert_called_once()
 
-    def test_gives_up_after_every_retry(self, _):
-        attempts = len(RETRY_WAIT_SECONDS) + 1
-        policy, models = policy_with_errors([overloaded()] * attempts)
-        with self.assertRaises(LLMUnavailableError):
-            policy._generate_with_retries("prompt")
-        self.assertEqual(models.calls, attempts)
-
-    def test_timeout_is_retried(self, sleep):
+    def test_network_timeout_is_retried_on_the_same_model(self, sleep):
         policy, models = policy_with_errors([httpx.ReadTimeout("slow")])
-        self.assertEqual(policy._generate_with_retries("prompt"), "reply")
+        self.assertTrue(policy._generate_with_retries("prompt").startswith("reply"))
         self.assertEqual(models.calls, 2)
         sleep.assert_called_once()
 
-    def test_per_minute_rate_limit_is_retried(self, sleep):
-        policy, models = policy_with_errors([rate_limited()])
-        self.assertEqual(policy._generate_with_retries("prompt"), "reply")
-        self.assertEqual(models.calls, 2)
+    def test_succeeds_after_every_retry_within_the_same_model(self, _):
+        policy, models = policy_with_errors([rate_limited()] * len(RETRY_WAIT_SECONDS))
+        self.assertTrue(policy._generate_with_retries("prompt").startswith("reply"))
+        self.assertEqual(models.calls, len(RETRY_WAIT_SECONDS) + 1)
+
+    def test_gives_up_after_every_retry_when_there_is_no_other_model(self, _):
+        attempts = len(RETRY_WAIT_SECONDS) + 1
+        policy, models = policy_with_errors([rate_limited()] * attempts)
+        with self.assertRaises(LLMUnavailableError):
+            policy._generate_with_retries("prompt")
+        self.assertEqual(models.calls, attempts)
 
     def test_used_up_daily_quota_is_not_retried_and_is_named(self, sleep):
         policy, models = policy_with_errors([daily_quota_used_up()])
@@ -113,6 +125,54 @@ class RetryTests(unittest.TestCase):
             policy._generate_with_retries("prompt")
         self.assertEqual(models.calls, 1)
         sleep.assert_not_called()
+
+
+@patch("src.agent.llm_policy.time.sleep")
+class ModelRotationTests(unittest.TestCase):
+    """The bug behind "status 504; retrying in 30 s" every day for three days."""
+
+    def test_busy_model_is_swapped_without_waiting(self, sleep):
+        policy, models = policy_with_errors([], fallback_models=("backup",))
+        models.per_model = {"primary": [ServerError(504, {"error": {"message": "timeout"}})],
+                            "backup": []}
+        reply = policy._generate_with_retries("prompt")
+        self.assertEqual(reply, "reply from backup")
+        self.assertEqual(models.asked, ["primary", "backup"])
+        sleep.assert_not_called()
+
+    def test_a_model_that_failed_is_not_asked_again_in_the_same_run(self, _):
+        policy, models = policy_with_errors([], fallback_models=("backup",))
+        models.per_model = {"primary": [overloaded(), overloaded()]}
+        self.assertEqual(policy._generate_with_retries("p"), "reply from backup")
+        self.assertEqual(policy._generate_with_retries("p"), "reply from backup")
+        self.assertEqual(models.asked, ["primary", "backup", "backup"])
+
+    def test_quota_is_per_model_so_the_next_model_is_tried(self, _):
+        policy, models = policy_with_errors([], fallback_models=("backup",))
+        models.per_model = {"primary": [daily_quota_used_up()]}
+        self.assertEqual(policy._generate_with_retries("p"), "reply from backup")
+        self.assertEqual(policy.models, ("backup",))
+
+    def test_every_model_out_of_quota_is_a_quota_error(self, _):
+        policy, models = policy_with_errors([], fallback_models=("backup",))
+        models.per_model = {
+            "primary": [daily_quota_used_up()],
+            "backup": [daily_quota_used_up()],
+        }
+        with self.assertRaises(LLMQuotaExhaustedError):
+            policy._generate_with_retries("p")
+
+    def test_every_model_busy_is_an_unavailable_error(self, _):
+        policy, models = policy_with_errors([], fallback_models=("backup",))
+        models.per_model = {"primary": [overloaded()], "backup": [overloaded()]}
+        with self.assertRaises(LLMUnavailableError):
+            policy._generate_with_retries("p")
+
+    def test_duplicate_model_names_are_asked_once(self, _):
+        policy = GeminiPolicy(
+            api_key="k", model="same", fallback_models=("same", "other")
+        )
+        self.assertEqual(policy.models, ("same", "other"))
 
 
 class SavedResultTests(unittest.TestCase):
