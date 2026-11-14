@@ -1,0 +1,13 @@
+Saving results to: artifacts/agent-comparisons/20261114-200613.jsonl
+planted:causal_self_attention      tool_agent  re-measured   4.74x (search   4.71x), 2 calls, 1 evaluations, 141 s
+Saving results to: artifacts/agent-comparisons/20261114-200837.jsonl
+planted:local_standardize tool_agent: skipped: Codex CLI failed: wrap in the meantime.
+Saving results to: artifacts/agent-comparisons/20261114-201019.jsonl
+planted:local_standardize          tool_agent  re-measured       - (search       -), 4 calls, 2 evaluations, 132 s
+Saving results to: artifacts/agent-comparisons/20261114-201235.jsonl
+attention tool_agent: skipped: Codex CLI failed: wrap in the meantime.
+Saving results to: artifacts/agent-comparisons/20261114-201515.jsonl
+attention tool_agent: skipped: Codex CLI failed: wrap in the meantime.
+Saving results to: artifacts/agent-comparisons/20261114-201630.jsonl
+attention                          tool_agent  re-measured   0.70x (search   0.71x), 5 calls, 3 evaluations, 152 s
+JOB_DONE 20:19

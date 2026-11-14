@@ -1,0 +1,63 @@
+=== E1 suite, gemini-3.6-flash 14:48
+Device: gpu (NVIDIA L4); matmul precision: highest
+Saving results to: artifacts/suite-runs/20261114-144826.jsonl
+evaluate_polynomial: expert 3.24x (reference 2.273 ms, expert 0.702 ms)
+  step=0 | The baseline evaluates polynomials by computing powers x^k for each term, producing a 2D tensor [24, 16000000] and performing a sum reduction. This incurs heavy memory traffic and expensive power instructions. Replacing this with Horner's method unrolled via a Python loop enables XLA to fuse the entire evaluation into a single elementwise kernel using fused multiply-adds (FMAs) on 1D tensor x, reducing memory bandwidth requirements to O(M). | ok speedup=3.065x (ref=2.281ms cand=0.744ms) | profile[backend=gpu; median_ms=0.763; device=gpu:NVIDIA L4]
+  step=1 | Estrin's method evaluates the 24-term polynomial using a binary tree structure of depth 5 log2(24) rather than the sequential dependency chain of depth 23 in Horner's method. Since all operations remain elementwise, XLA fuses the evaluation into a single CUDA kernel. The reduced critical path latency and increased instruction-level parallelism (ILP) per GPU thread allow NVPTX/SASS instruction scheduling to hide latency better and approach memory bandwidth limits. | ok speedup=3.113x (ref=2.221ms cand=0.713ms) | profile[backend=gpu; median_ms=0.738; device=gpu:NVIDIA L4]
+matrix_power: expert 2.93x (reference 2.499 ms, expert 0.853 ms)
+  step=0 | Computing A^16 using a linear loop requires 15 sequential matrix multiplications. By using repeated squaring (binary exponentiation: A^2 = A@A, A^4 = A^2@A^2, A^8 = A^4@A^4, A^16 = A^8@A^8), we reduce the number of matrix multiplications from 15 to 4, expecting a ~3.75x speedup. | ok speedup=2.910x (ref=2.517ms cand=0.865ms) | profile[backend=gpu; median_ms=0.920; device=gpu:NVIDIA L4]
+
+program                             expert     agent  % of expert  solved at
+evaluate_polynomial                  3.24x     3.11x          96%     step 0
+matrix_power                         2.93x     2.91x          99%     step 0
+=== E2 timing spread 14:51
+Device: gpu (NVIDIA L4); matmul precision: highest
+Reference: scan; trials: 10; repeats: 10
+depth width median_speedup min_speedup max_speedup
+    1    32          1.009       0.969       1.044
+    1   128          1.003       0.978       1.036
+    1   256          1.002       0.982       1.009
+    4    32          0.999       0.993       1.016
+    4   128          1.000       0.994       1.011
+    4   256          1.004       0.997       1.012
+   10    32          1.002       0.998       1.005
+   10   128          1.000       0.997       1.016
+   10   256          1.002       0.998       1.005
+
+Noise band (5th-95th percentile of 90 identical-program speedups): 0.992x to 1.016x
+Saved to artifacts/noise-floor/gpu_scan.json
+Device: gpu (NVIDIA L4); matmul precision: highest
+Reference: vectorized; trials: 10; repeats: 10
+depth width median_speedup min_speedup max_speedup
+    1    32          1.017       0.981       1.024
+    1   128          1.000       0.972       1.021
+    1   256          0.992       0.928       1.023
+    4    32          0.996       0.971       1.105
+    4   128          1.004       0.980       1.052
+    4   256          0.983       0.967       1.070
+   10    32          0.999       0.976       1.026
+   10   128          0.981       0.951       1.005
+   10   256          0.997       0.992       1.009
+
+Noise band (5th-95th percentile of 90 identical-program speedups): 0.972x to 1.025x
+Saved to artifacts/noise-floor/gpu_vectorized.json
+=== E3 pilot 14:58
+Device: gpu (NVIDIA L4); matmul precision: highest
+Model: gpt-6-luna
+Saving results to: artifacts/agent-comparisons/20261114-145828.jsonl
+planted:causal_self_attention      single      re-measured       - (search       -), 1 calls, 1 evaluations, 92 s
+planted:causal_self_attention      best_of_n   re-measured   4.95x (search   4.77x), 12 calls, 12 evaluations, 1031 s
+planted:causal_self_attention      chain       re-measured   1.00x (search   1.01x), 12 calls, 12 evaluations, 777 s
+planted:causal_self_attention      chain_original re-measured   5.58x (search   5.66x), 10 calls, 9 evaluations, 794 s
+planted:causal_self_attention      tool_agent  re-measured   6.59x (search   6.41x), 11 calls, 9 evaluations, 831 s
+planted:embed_and_transform        single      re-measured       - (search       -), 1 calls, 1 evaluations, 79 s
+planted:embed_and_transform        best_of_n   re-measured  94.77x (search  94.79x), 12 calls, 12 evaluations, 548 s
+planted:embed_and_transform        chain       re-measured  95.08x (search  91.95x), 12 calls, 12 evaluations, 621 s
+planted:embed_and_transform        chain_original re-measured  93.20x (search  92.22x), 3 calls, 2 evaluations, 107 s
+planted:embed_and_transform        tool_agent  re-measured  90.32x (search  91.10x), 2 calls, 1 evaluations, 54 s
+planted:local_standardize          single      re-measured  42.80x (search  46.03x), 1 calls, 1 evaluations, 66 s
+planted:local_standardize          best_of_n   re-measured  50.31x (search  45.35x), 12 calls, 12 evaluations, 468 s
+planted:local_standardize          chain       re-measured  89.39x (search  78.08x), 12 calls, 12 evaluations, 465 s
+planted:local_standardize          chain_original re-measured  76.12x (search  58.10x), 3 calls, 2 evaluations, 91 s
+planted:local_standardize          tool_agent  re-measured  49.96x (search  38.28x), 5 calls, 3 evaluations, 141 s
+JOB_DONE 16:41

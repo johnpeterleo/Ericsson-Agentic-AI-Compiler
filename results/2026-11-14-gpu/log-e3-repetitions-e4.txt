@@ -1,0 +1,66 @@
+=== E3 repetitions 2 and 3 16:44
+Device: gpu (NVIDIA L4); matmul precision: highest
+Model: gpt-6-luna
+Saving results to: artifacts/agent-comparisons/20261114-164425.jsonl
+planted:causal_self_attention      single      re-measured       - (search       -), 1 calls, 1 evaluations, 120 s
+planted:causal_self_attention      best_of_n   re-measured   5.72x (search   5.44x), 12 calls, 12 evaluations, 947 s
+planted:causal_self_attention      chain       re-measured   4.77x (search   4.74x), 12 calls, 12 evaluations, 952 s
+planted:causal_self_attention      chain_original re-measured       - (search       -), 1 calls, 0 evaluations, 4 s
+planted:causal_self_attention tool_agent: skipped: Codex CLI failed: wrap in the meantime.
+codex
+
+tokens used
+4,319
+
+planted:causal_self_attention      single      re-measured       - (search       -), 1 calls, 1 evaluations, 77 s
+planted:causal_self_attention      best_of_n   re-measured   4.84x (search   4.71x), 12 calls, 12 evaluations, 843 s
+planted:causal_self_attention      chain       re-measured   4.84x (search   4.66x), 12 calls, 12 evaluations, 874 s
+planted:causal_self_attention      chain_original re-measured       - (search       -), 4 calls, 3 evaluations, 208 s
+planted:causal_self_attention      tool_agent  re-measured   4.89x (search   4.86x), 3 calls, 2 evaluations, 163 s
+planted:embed_and_transform        single      re-measured       - (search       -), 1 calls, 1 evaluations, 73 s
+planted:embed_and_transform        best_of_n   re-measured  93.02x (search  93.67x), 12 calls, 12 evaluations, 574 s
+planted:embed_and_transform        chain       re-measured  94.92x (search  89.69x), 12 calls, 12 evaluations, 546 s
+planted:embed_and_transform        chain_original re-measured  89.68x (search  92.74x), 9 calls, 8 evaluations, 347 s
+planted:embed_and_transform        tool_agent  re-measured  90.51x (search  93.97x), 2 calls, 1 evaluations, 58 s
+planted:embed_and_transform        single      re-measured   1.55x (search   1.55x), 1 calls, 1 evaluations, 31 s
+planted:embed_and_transform        best_of_n   re-measured  97.29x (search  89.08x), 12 calls, 12 evaluations, 496 s
+planted:embed_and_transform        chain       re-measured  89.87x (search  96.86x), 12 calls, 12 evaluations, 650 s
+planted:embed_and_transform        chain_original re-measured  94.15x (search  94.77x), 2 calls, 1 evaluations, 55 s
+planted:embed_and_transform        tool_agent  re-measured  92.37x (search  92.80x), 3 calls, 2 evaluations, 87 s
+planted:local_standardize          single      re-measured       - (search       -), 1 calls, 1 evaluations, 60 s
+planted:local_standardize          best_of_n   re-measured  45.80x (search  42.46x), 12 calls, 12 evaluations, 479 s
+planted:local_standardize          chain       re-measured  51.07x (search  45.58x), 12 calls, 12 evaluations, 454 s
+planted:local_standardize          chain_original re-measured       - (search       -), 3 calls, 2 evaluations, 86 s
+planted:local_standardize tool_agent: skipped: Codex CLI failed: wrap in the meantime.
+codex
+
+tokens used
+5,134
+
+planted:local_standardize          single      re-measured       - (search       -), 1 calls, 1 evaluations, 37 s
+planted:local_standardize          best_of_n   re-measured  70.89x (search  70.07x), 12 calls, 12 evaluations, 457 s
+planted:local_standardize          chain       re-measured  46.44x (search  51.40x), 12 calls, 12 evaluations, 475 s
+planted:local_standardize          chain_original re-measured  79.48x (search  65.45x), 2 calls, 1 evaluations, 43 s
+planted:local_standardize          tool_agent  re-measured  71.03x (search  69.28x), 4 calls, 3 evaluations, 124 s
+=== E4 realistic kernels 19:23
+Device: gpu (NVIDIA L4); matmul precision: highest
+Model: gpt-6-luna
+Saving results to: artifacts/agent-comparisons/20261114-192318.jsonl
+matmul                             single      re-measured       - (search       -), 1 calls, 0 evaluations, 15 s
+matmul                             tool_agent  re-measured   2.06x (search   2.02x), 6 calls, 7 evaluations, 379 s
+softmax                            single      re-measured   0.66x (search   0.65x), 1 calls, 1 evaluations, 16 s
+softmax                            tool_agent  re-measured   1.00x (search   1.00x), 4 calls, 2 evaluations, 34 s
+fused_gemm_gelu_layernorm          single      re-measured   0.01x (search   0.01x), 1 calls, 1 evaluations, 154 s
+fused_gemm_gelu_layernorm          tool_agent  re-measured   1.00x (search   0.99x), 4 calls, 2 evaluations, 125 s
+attention                          single      re-measured       - (search       -), 1 calls, 1 evaluations, 39 s
+attention tool_agent: skipped: Codex CLI failed: wrap in the meantime.
+codex
+
+tokens used
+6,886
+
+transformer_block                  single      re-measured   0.88x (search   0.90x), 1 calls, 1 evaluations, 186 s
+transformer_block                  tool_agent  re-measured   0.99x (search   0.99x), 4 calls, 2 evaluations, 336 s
+gpt single: skipped: Compilation took longer than 60 s.
+gpt tool_agent: skipped: Compilation took longer than 60 s.
+JOB_DONE 19:57
