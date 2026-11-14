@@ -1,0 +1,26 @@
+Saving results to: artifacts/agent-comparisons/20261114-202542.jsonl
+softmax                            single      re-measured       - (search       -), 1 calls, 1 evaluations, 25 s
+Saving results to: artifacts/agent-comparisons/20261114-202612.jsonl
+softmax                            tool_agent  re-measured   1.01x (search   1.01x), 6 calls, 16 evaluations, 186 s
+Saving results to: artifacts/agent-comparisons/20261114-202923.jsonl
+fused_gemm_gelu_layernorm          single      re-measured   0.98x (search   0.97x), 1 calls, 1 evaluations, 66 s
+Saving results to: artifacts/agent-comparisons/20261114-203034.jsonl
+fused_gemm_gelu_layernorm          tool_agent  re-measured   2.34x (search   2.33x), 8 calls, 13 evaluations, 687 s
+Saving results to: artifacts/agent-comparisons/20261114-204207.jsonl
+attention                          single      re-measured       - (search       -), 1 calls, 1 evaluations, 105 s
+Saving results to: artifacts/agent-comparisons/20261114-204356.jsonl
+attention                          tool_agent  re-measured   1.94x (search   2.01x), 9 calls, 16 evaluations, 1048 s
+Saving results to: artifacts/agent-comparisons/20261114-210127.jsonl
+transformer_block                  single      re-measured       - (search       -), 1 calls, 1 evaluations, 195 s
+Saving results to: artifacts/agent-comparisons/20261114-210446.jsonl
+transformer_block                  tool_agent  re-measured   0.96x (search   0.95x), 5 calls, 10 evaluations, 1239 s
+Saving results to: artifacts/agent-comparisons/20261114-212529.jsonl
+matmul                             single      re-measured   0.86x (search   0.85x), 1 calls, 1 evaluations, 65 s
+Saving results to: artifacts/agent-comparisons/20261114-212639.jsonl
+matmul                             tool_agent  re-measured   1.00x (search   1.00x), 5 calls, 10 evaluations, 408 s
+=== gpt, compile limit 300 s
+Saving results to: artifacts/agent-comparisons/20261114-213332.jsonl
+gpt single: skipped: Compilation took longer than 300.0 s.
+Saving results to: artifacts/agent-comparisons/20261114-214721.jsonl
+gpt tool_agent: skipped: Compilation took longer than 300.0 s.
+JOB_DONE 22:01

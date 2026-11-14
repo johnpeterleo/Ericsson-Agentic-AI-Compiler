@@ -12,6 +12,7 @@ the records.
 | `e2-timing-spread-*.json` | E2: speedup reported for two identical programs, 90 trials each |
 | `e3-planted-*.jsonl` | E3: 3 planted programs x 5 arms x 3 repetitions, Codex `gpt-6-luna` (medium reasoning), 12 calls per arm |
 | `e4-realistic-kernels*.jsonl` | E4: programs in `data/programs/`, single call and tool agent, 1 repetition |
+| `e4-realistic-kernels-gpt-6.1-sol.jsonl` | E4 again with Codex `gpt-6.1-sol` (medium reasoning), same code and settings |
 | `log-*.txt` | Console output of the runs |
 
 ## E1: suite, one call is enough
@@ -70,3 +71,25 @@ What the table supports:
 
 A value below 1x means the best passing candidate was slower than the
 reference, so the reference would be kept.
+
+## E4 with a stronger model: gpt-6.1-sol
+
+Same code, settings and 12-call budget as the gpt-6-luna runs, 1 repetition.
+Each run was retried when Codex returned an empty reply.
+
+| Program | single | tool_agent | Note |
+|---|---|---|---|
+| softmax | none | 1.01x | Inside the timing spread; 16 evaluations |
+| fused_gemm_gelu_layernorm | 0.98x | 2.34x | Not a real gain: every candidate sets `precision='TF32_TF32_F32'` on the matrix product |
+| attention | none | **1.94x** | A real gain, no precision change: each block of queries only computes scores for the keys up to its own position, and heads are processed in groups. Search speedups went 0.95x, 1.22x, 1.41x, 2.01x over 16 evaluations |
+| transformer_block | none | 0.96x | 10 evaluations |
+| matmul | 0.86x | 1.00x | The tool agent did not change the precision this time |
+| gpt | skipped | skipped | The reference takes over 300 s to compile at this size (limit raised from 60 s for this program) |
+
+The attention result is one run and should be repeated before it is reported
+as more than an example.
+
+The precision results point at the setup, not at the agent: the references
+run with `JAX_DEFAULT_MATMUL_PRECISION=highest`, while these programs'
+tolerance (1e-2) was chosen to allow TF32. A candidate that asks for TF32
+then looks about 2x faster on any program dominated by a matrix product.
