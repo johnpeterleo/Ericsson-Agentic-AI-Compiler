@@ -1,0 +1,11 @@
+mkdir: cannot create directory ‘/var/tmp/hidden-results’: File exists
+hidden: 22 items
+createclaude exit code 0 at 16:58
+=== scoring
+{'task': 'attention', 'arm': 'claude_code', 'matmul_precision': 'default', 'check_correct': True, 'check_message': None, 'search_speedup': 1.25116205471004, 'remeasured_correct': True, 'remeasured_speedup': 1.2463144912529711, 'precision_words_in_source': []}
+FOLDER /home/joelmaharena/cc-attention-1115-1622
+earlier results restored
+JOB_DONE 16:59
+joelmaharena/cc-attention-1115-1623
+earlier results restored
+JOB_DONE 16:58
