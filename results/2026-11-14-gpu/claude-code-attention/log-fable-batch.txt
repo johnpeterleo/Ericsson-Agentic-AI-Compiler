@@ -1,0 +1,29 @@
+=== round 1: attention 20:40
+Saving results to: artifacts/agent-comparisons/20261115-204056.jsonl
+attention                          single      re-measured   1.38x (search   1.39x), 1 calls, 1 evaluations, 86 s
+Saving results to: artifacts/agent-comparisons/20261115-204226.jsonl
+attention                          tool_agent  re-measured   2.08x (search   2.09x), 10 calls, 16 evaluations, 1532 s
+hidden: 22 items
+claude exit code 0 at 21:36
+{'task': 'attention', 'arm': 'claude_code', 'matmul_precision': 'default', 'check_correct': True, 'check_message': None, 'search_speedup': 2.074327816915365, 'remeasured_correct': True, 'remeasured_speedup': 2.073394712560266, 'precision_words_in_source': []}
+FOLDER /home/joelmaharena/cc-attention-1115-2107
+earlier results restored
+=== round 2: attention 21:38
+Saving results to: artifacts/agent-comparisons/20261115-213805.jsonl
+attention                          single      re-measured   1.46x (search   1.47x), 1 calls, 1 evaluations, 77 s
+Saving results to: artifacts/agent-comparisons/20261115-213926.jsonl
+attention                          tool_agent  re-measured   2.12x (search   2.12x), 8 calls, 16 evaluations, 1694 s
+hidden: 22 items
+claude exit code 0 at 22:44
+{'task': 'attention', 'arm': 'claude_code', 'matmul_precision': 'default', 'check_correct': True, 'check_message': None, 'search_speedup': 1.5273706296484153, 'remeasured_correct': True, 'remeasured_speedup': 1.5133662422811271, 'precision_words_in_source': []}
+FOLDER /home/joelmaharena/cc-attention-1115-2207
+earlier results restored
+=== round 3: transformer_block 22:45
+Saving results to: artifacts/agent-comparisons/20261115-224559.jsonl
+transformer_block                  tool_agent  re-measured   1.13x (search   1.14x), 8 calls, 16 evaluations, 1640 s
+hidden: 22 items
+claude exit code 0 at 23:32
+{'task': 'transformer_block', 'arm': 'claude_code', 'matmul_precision': 'default', 'check_correct': True, 'check_message': None, 'search_speedup': 1.1399561748164608, 'remeasured_correct': True, 'remeasured_speedup': 1.1358102098986902, 'precision_words_in_source': []}
+FOLDER /home/joelmaharena/cc-transformer_block-1115-2313
+earlier results restored
+BATCH_DONE 23:34

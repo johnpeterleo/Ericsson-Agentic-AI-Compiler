@@ -17,6 +17,7 @@ the records.
 | `e4-default-precision-gpt-6.1-sol.jsonl` | E4 with the references at XLA's default matmul precision |
 | `e4-default-precision-repetitions-gpt-6.1-sol.jsonl` | Repetitions 2 and 3 on attention and transformer_block, default precision (run 2026-11-15) |
 | `e4-claude-fable-5.2.jsonl` | softmax and attention with Claude Fable 5.2, default precision (run 2026-11-15) |
+| `e4-claude-fable-5.2-batch.jsonl` | More Fable repetitions on attention and transformer_block (2026-11-15); Claude Code runs in `claude-code-attention/` |
 | `log-*.txt` | Console output of the runs |
 
 ## E1: suite, one call is enough

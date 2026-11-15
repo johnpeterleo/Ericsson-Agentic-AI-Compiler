@@ -39,6 +39,43 @@ the softmax denominator from a ones column appended to V.
 | Claude Code, Fable (clean run) | 2.11x |
 | Claude Code, Fable (2 overlapping runs) | 1.25x, 1.36x |
 
+## Repetitions (2026-11-15, `fable_batch.sh`, `log-fable-batch.txt`)
+
+Run one after the other, nothing else on the VM. All with claude-fable-5-2,
+references at default precision, the subscription login (`apiKeySource:
+none` in every log). The single call and tool agent records are in
+`../e4-claude-fable-5.2-batch.jsonl`.
+
+| attention | first run | repetition 2 | repetition 3 |
+|---|---|---|---|
+| single call | 1.56x | 1.38x | 1.46x |
+| tool agent | 2.13x | 2.08x | 2.12x |
+| Claude Code | 2.11x | 2.07x (`cc-attention-1115-2107`) | 1.51x (`cc-attention-1115-2207`) |
+
+| transformer_block | result |
+|---|---|
+| tool agent | 1.13x (8 calls) |
+| Claude Code | 1.14x (`cc-transformer_block-1115-2313`) |
+
+Claude Code runs:
+
+| Folder | Re-measured | Turns | Time | Output tokens (thinking) | API-price equivalent |
+|---|---|---|---|---|---|
+| cc-attention-1115-2107 | 2.07x | 24 | 29 min | 25,424 (11,650) | $1.91 |
+| cc-attention-1115-2207 | 1.51x | 22 | 37 min | 19,817 (9,018) | $1.62 |
+| cc-transformer_block-1115-2313 | 1.14x | 14 | 19 min | 14,665 (6,124) | $1.24 |
+
+The "API-price equivalent" is Claude Code's own estimate of what the tokens
+would cost at API prices. Nothing was billed: the runs counted against the
+subscription's usage limit.
+
+In the 1.51x run Claude Code measured that 16 query blocks ran at about 1.9x
+but compiled for 101 s, over the 60 s limit, and settled for 7 blocks.
+
+Audit: 57 tool calls in the three runs, all shell commands in the run's own
+folder or with the project's Python interpreter. No winning candidate in this
+batch changes the precision.
+
 ## The two overlapping runs
 
 **Caveat: the two runs ran at the same time on the same VM** (the job was
