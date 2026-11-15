@@ -1,0 +1,9 @@
+hidden: 22 items
+created /home/joelmaharena/cc-attention-1115-1714
+=== Claude Code started 17:14
+claude exit code 0 at 17:27
+=== scoring
+{'task': 'attention', 'arm': 'claude_code', 'matmul_precision': 'default', 'check_correct': True, 'check_message': None, 'search_speedup': 2.1113583602699566, 'remeasured_correct': True, 'remeasured_speedup': 2.1098025569670056, 'precision_words_in_source': []}
+FOLDER /home/joelmaharena/cc-attention-1115-1714
+earlier results restored
+JOB_DONE 17:28

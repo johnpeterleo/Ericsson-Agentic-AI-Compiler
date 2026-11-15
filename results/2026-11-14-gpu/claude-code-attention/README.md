@@ -15,6 +15,32 @@ precision.
 **Scoring** (`cc_score.py`): the same as the comparison arms, the full check,
 then a re-measurement with 50 repeats on an input it never saw.
 
+## Clean run (run-1714-clean)
+
+One run with the VM to itself, same setup: **2.11x** re-measured (2.11x in
+`check.py`), no precision change. 12 turns, 13 minutes, 14,647 output tokens
+(5,941 thinking), $1.14 at API prices. Audit: all 11 tool calls were shell
+commands in its own folder or with the project's Python interpreter.
+
+Its rewrite goes further than the query-block loop the other agents used: it
+splits the causal triangle into unmasked squares of 1024, 512, 256 and 128
+below the diagonal plus masked 128x128 diagonal tiles, one batched matmul per
+size, so about 53% of the score matrix is computed. It also replaces the
+row-max pass with an upper bound on each row's scores (softmax does not change
+when every score in a row is shifted by the same amount), with an exact
+fallback through `lax.cond` when that bound could cause underflow, and gets
+the softmax denominator from a ones column appended to V.
+
+| attention, default precision | Re-measured speedup |
+|---|---|
+| single call (gpt-6.1-sol x3, Fable x1) | 1.56x to 1.81x |
+| tool agent, gpt-6.1-sol (3 runs) | 3.24x, 1.96x, 1.81x |
+| tool agent, Fable (1 run) | 2.13x |
+| Claude Code, Fable (clean run) | 2.11x |
+| Claude Code, Fable (2 overlapping runs) | 1.25x, 1.36x |
+
+## The two overlapping runs
+
 **Caveat: the two runs ran at the same time on the same VM** (the job was
 started twice by mistake). They shared the GPU and the CPU, which slows
 timing and, above all, compilation. Both agents named the 60 s compile limit
