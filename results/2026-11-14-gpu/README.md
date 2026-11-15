@@ -13,6 +13,8 @@ the records.
 | `e3-planted-*.jsonl` | E3: 3 planted programs x 5 arms x 3 repetitions, Codex `gpt-6-luna` (medium reasoning), 12 calls per arm |
 | `e4-realistic-kernels*.jsonl` | E4: programs in `data/programs/`, single call and tool agent, 1 repetition |
 | `e4-realistic-kernels-gpt-6.1-sol.jsonl` | E4 again with Codex `gpt-6.1-sol` (medium reasoning), same code and settings |
+| `e4-attention-repetitions-gpt-6.1-sol.jsonl` | Two more tool-agent runs on attention, matmul precision highest |
+| `e4-default-precision-gpt-6.1-sol.jsonl` | E4 with the references at XLA's default matmul precision |
 | `log-*.txt` | Console output of the runs |
 
 ## E1: suite, one call is enough
@@ -93,3 +95,28 @@ The precision results point at the setup, not at the agent: the references
 run with `JAX_DEFAULT_MATMUL_PRECISION=highest`, while these programs'
 tolerance (1e-2) was chosen to allow TF32. A candidate that asks for TF32
 then looks about 2x faster on any program dominated by a matrix product.
+
+## E4 follow-ups with gpt-6.1-sol
+
+**Attention again, precision highest (2 more tool-agent runs): 1.82x and
+1.81x.** Both winning candidates combine the causal block rewrite with
+`TF32_TF32_F32` precision, so they mix a real gain with the precision trade.
+In the first of them the best candidate without a precision change reached
+1.43x during the search. Only the first run (1.94x) is free of it.
+
+**References at XLA's default matmul precision** (the environment variable is
+not set), 1 repetition. Asking for lower precision no longer pays, and no
+winning candidate changes the precision:
+
+| Program | single | tool_agent | Note |
+|---|---|---|---|
+| attention | 1.59x | **3.24x** | Causal block rewrite: 512-row query blocks only score the keys up to their own position, heads in groups of four |
+| transformer_block | none | **1.54x** | The same causal block rewrite applied to the attention inside the block |
+| fused_gemm_gelu_layernorm | 0.95x | 1.00x | The 2.34x seen at precision highest is gone |
+| matmul | 0.28x | 1.00x | |
+| softmax | none | 1.01x | Inside the timing spread |
+
+So with a fair reference, the tool agent with gpt-6.1-sol beat XLA on the two
+programs that contain causal attention, and on nothing else. Each number is
+one run. The gain is one idea: XLA computes the scores that the causal mask
+then throws away, and the rewrite skips them.

@@ -1,0 +1,39 @@
+=== A attention repetitions, precision highest 22:25
+Device: gpu (NVIDIA L4); matmul precision: highest
+Saving results to: artifacts/agent-comparisons/20261114-222556.jsonl
+attention                          tool_agent  re-measured   1.82x (search   1.82x), 7 calls, 16 evaluations, 926 s
+Device: gpu (NVIDIA L4); matmul precision: highest
+Saving results to: artifacts/agent-comparisons/20261114-224126.jsonl
+attention                          tool_agent  re-measured   1.81x (search   1.83x), 8 calls, 16 evaluations, 1105 s
+=== B kernels at default precision 22:59
+Device: gpu (NVIDIA L4); matmul precision: default
+Saving results to: artifacts/agent-comparisons/20261114-225955.jsonl
+attention                          single      re-measured   1.59x (search   1.59x), 1 calls, 1 evaluations, 123 s
+Device: gpu (NVIDIA L4); matmul precision: default
+Saving results to: artifacts/agent-comparisons/20261114-230201.jsonl
+attention                          tool_agent  re-measured   3.24x (search   3.26x), 7 calls, 16 evaluations, 819 s
+Device: gpu (NVIDIA L4); matmul precision: default
+Saving results to: artifacts/agent-comparisons/20261114-231544.jsonl
+fused_gemm_gelu_layernorm          single      re-measured   0.95x (search   0.96x), 1 calls, 1 evaluations, 45 s
+Device: gpu (NVIDIA L4); matmul precision: default
+Saving results to: artifacts/agent-comparisons/20261114-231634.jsonl
+fused_gemm_gelu_layernorm          tool_agent  re-measured   1.00x (search   1.01x), 5 calls, 13 evaluations, 542 s
+Device: gpu (NVIDIA L4); matmul precision: default
+Saving results to: artifacts/agent-comparisons/20261114-232541.jsonl
+matmul                             single      re-measured   0.28x (search   0.28x), 1 calls, 1 evaluations, 43 s
+Device: gpu (NVIDIA L4); matmul precision: default
+Saving results to: artifacts/agent-comparisons/20261114-232628.jsonl
+matmul                             tool_agent  re-measured   1.00x (search   1.00x), 5 calls, 7 evaluations, 181 s
+Device: gpu (NVIDIA L4); matmul precision: default
+Saving results to: artifacts/agent-comparisons/20261114-232935.jsonl
+softmax                            single      re-measured       - (search       -), 1 calls, 1 evaluations, 20 s
+Device: gpu (NVIDIA L4); matmul precision: default
+Saving results to: artifacts/agent-comparisons/20261114-233000.jsonl
+softmax                            tool_agent  re-measured   1.01x (search   1.01x), 5 calls, 13 evaluations, 146 s
+Device: gpu (NVIDIA L4); matmul precision: default
+Saving results to: artifacts/agent-comparisons/20261114-233231.jsonl
+transformer_block                  single      re-measured       - (search       -), 1 calls, 1 evaluations, 123 s
+Device: gpu (NVIDIA L4); matmul precision: default
+Saving results to: artifacts/agent-comparisons/20261114-233438.jsonl
+transformer_block                  tool_agent  re-measured   1.54x (search   1.56x), 9 calls, 16 evaluations, 1514 s
+JOB_DONE 23:59
