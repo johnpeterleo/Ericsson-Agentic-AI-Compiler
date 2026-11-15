@@ -30,6 +30,9 @@ Both found the causal block rewrite with 4 query blocks, no precision change.
 For comparison, at default precision: the single call got 1.56x to 1.81x and
 our tool agent 1.81x to 3.24x (gpt-6.1-sol and Fable).
 
-**Audit of the logs:** every tool call was a shell command inside its own
-folder or its own task-output file under `/tmp/claude-1002/`; neither run
-touched the hidden results or used `sudo`.
+**Audit of the logs** (`claude_log.jsonl` holds every tool call): all 31
+calls were shell commands. Outside their own folder they only used the
+project's Python interpreter and their own task-output files under
+`/tmp/claude-1002/`. Neither run read the hidden results or used `sudo`.
+Run 1622 noticed the other job on the GPU and looked up which process it was
+(`ps`, `readlink /proc/<pid>/cwd`), but did not open that job's files.
