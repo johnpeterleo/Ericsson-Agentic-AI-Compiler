@@ -16,6 +16,7 @@ the records.
 | `e4-attention-repetitions-gpt-6.1-sol.jsonl` | Two more tool-agent runs on attention, matmul precision highest |
 | `e4-default-precision-gpt-6.1-sol.jsonl` | E4 with the references at XLA's default matmul precision |
 | `e4-default-precision-repetitions-gpt-6.1-sol.jsonl` | Repetitions 2 and 3 on attention and transformer_block, default precision (run 2026-11-15) |
+| `e4-claude-fable-5.2.jsonl` | softmax and attention with Claude Fable 5.2, default precision (run 2026-11-15) |
 | `log-*.txt` | Console output of the runs |
 
 ## E1: suite, one call is enough
@@ -134,3 +135,26 @@ candidate changes the precision.
 
 - Attention: both arms beat XLA in every run. The tool agent is ahead of the single call in each repetition, clearly in the first (3.24x) and narrowly in the other two.
 - transformer_block: the single call never produced a passing rewrite; the tool agent gained in every run (above the 1.03x timing spread), by 16% in two of three.
+
+## E4 with Claude Fable 5.2 (2026-11-15)
+
+Claude Fable 5.2 through the Claude Code CLI, references at XLA's default
+matmul precision, 12-call budget, 1 repetition. The code is commit `6a612ed`
+with one change: `REQUEST_TIMEOUT_MS` raised from 120 s to 900 s, so long
+Fable replies are not cut off. Only two programs were run, because each Fable
+call used a large share of the subscription's usage limit.
+
+| Program | single | tool_agent | Note |
+|---|---|---|---|
+| softmax | 0.72x | 1.00x | 3 calls, then the agent finished: nothing to gain, as with gpt-6.1-sol |
+| attention | 1.56x | **2.13x** | Causal block rewrite (12 query blocks, each scoring only its key prefix), no precision change. 7 calls, 15 evaluations |
+
+Attention across the two models, default precision:
+
+| Model | single | tool_agent |
+|---|---|---|
+| gpt-6.1-sol (3 runs) | 1.59x, 1.81x, 1.59x | 3.24x, 1.96x, 1.81x |
+| claude-fable-5.2 (1 run) | 1.56x | 2.13x |
+
+Both models find the same rewrite, and in every run the tool agent ends
+ahead of the single call.

@@ -1,0 +1,20 @@
+=== repetition 1 15:33
+Device: gpu (NVIDIA L4); matmul precision: default
+Model: claude-fable-5-2
+Saving results to: artifacts/agent-comparisons/20261115-153354.jsonl
+softmax                            single      re-measured   0.72x (search   0.72x), 1 calls, 1 evaluations, 35 s
+Device: gpu (NVIDIA L4); matmul precision: default
+Model: claude-fable-5-2
+Saving results to: artifacts/agent-comparisons/20261115-153435.jsonl
+softmax                            tool_agent  re-measured   1.00x (search   1.00x), 3 calls, 4 evaluations, 48 s
+JOB_DONE 15:35
+=== repetition 1 15:39
+Device: gpu (NVIDIA L4); matmul precision: default
+Model: claude-fable-5-2
+Saving results to: artifacts/agent-comparisons/20261115-153911.jsonl
+attention                          single      re-measured   1.56x (search   1.57x), 1 calls, 1 evaluations, 119 s
+Device: gpu (NVIDIA L4); matmul precision: default
+Model: claude-fable-5-2
+Saving results to: artifacts/agent-comparisons/20261115-154114.jsonl
+attention                          tool_agent  re-measured   2.13x (search   2.14x), 7 calls, 15 evaluations, 1336 s
+JOB_DONE 16:03
