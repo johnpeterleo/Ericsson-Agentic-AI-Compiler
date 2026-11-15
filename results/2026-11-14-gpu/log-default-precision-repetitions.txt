@@ -1,0 +1,27 @@
+=== repetition 2 09:51
+Device: gpu (NVIDIA L4); matmul precision: default
+Saving results to: artifacts/agent-comparisons/20261115-095147.jsonl
+attention                          single      re-measured   1.81x (search   1.81x), 1 calls, 1 evaluations, 137 s
+Device: gpu (NVIDIA L4); matmul precision: default
+Saving results to: artifacts/agent-comparisons/20261115-095408.jsonl
+attention                          tool_agent  re-measured   1.96x (search   1.95x), 8 calls, 16 evaluations, 1065 s
+Device: gpu (NVIDIA L4); matmul precision: default
+Saving results to: artifacts/agent-comparisons/20261115-101157.jsonl
+transformer_block                  single      re-measured       - (search       -), 1 calls, 1 evaluations, 133 s
+Device: gpu (NVIDIA L4); matmul precision: default
+Saving results to: artifacts/agent-comparisons/20261115-101414.jsonl
+transformer_block                  tool_agent  re-measured   1.16x (search   1.15x), 10 calls, 14 evaluations, 1371 s
+=== repetition 3 10:37
+Device: gpu (NVIDIA L4); matmul precision: default
+Saving results to: artifacts/agent-comparisons/20261115-103709.jsonl
+attention                          single      re-measured   1.59x (search   1.59x), 1 calls, 1 evaluations, 126 s
+Device: gpu (NVIDIA L4); matmul precision: default
+Saving results to: artifacts/agent-comparisons/20261115-103919.jsonl
+attention                          tool_agent  re-measured   1.81x (search   1.81x), 9 calls, 16 evaluations, 1166 s
+Device: gpu (NVIDIA L4); matmul precision: default
+Saving results to: artifacts/agent-comparisons/20261115-105848.jsonl
+transformer_block                  single      re-measured       - (search       -), 1 calls, 1 evaluations, 123 s
+Device: gpu (NVIDIA L4); matmul precision: default
+Saving results to: artifacts/agent-comparisons/20261115-110055.jsonl
+transformer_block                  tool_agent  re-measured   1.16x (search   1.16x), 8 calls, 16 evaluations, 1324 s
+JOB_DONE 11:23

@@ -15,6 +15,7 @@ the records.
 | `e4-realistic-kernels-gpt-6.1-sol.jsonl` | E4 again with Codex `gpt-6.1-sol` (medium reasoning), same code and settings |
 | `e4-attention-repetitions-gpt-6.1-sol.jsonl` | Two more tool-agent runs on attention, matmul precision highest |
 | `e4-default-precision-gpt-6.1-sol.jsonl` | E4 with the references at XLA's default matmul precision |
+| `e4-default-precision-repetitions-gpt-6.1-sol.jsonl` | Repetitions 2 and 3 on attention and transformer_block, default precision (run 2026-11-15) |
 | `log-*.txt` | Console output of the runs |
 
 ## E1: suite, one call is enough
@@ -120,3 +121,16 @@ So with a fair reference, the tool agent with gpt-6.1-sol beat XLA on the two
 programs that contain causal attention, and on nothing else. Each number is
 one run. The gain is one idea: XLA computes the scores that the causal mask
 then throws away, and the rewrite skips them.
+
+### Repetitions at default precision (attention and transformer_block)
+
+Re-measured speedups for repetitions 1, 2, 3 with gpt-6.1-sol. No winning
+candidate changes the precision.
+
+| Program | single | tool_agent |
+|---|---|---|
+| attention | 1.59x, 1.81x, 1.59x | 3.24x, 1.96x, 1.81x |
+| transformer_block | none, none, none | 1.54x, 1.16x, 1.16x |
+
+- Attention: both arms beat XLA in every run. The tool agent is ahead of the single call in each repetition, clearly in the first (3.24x) and narrowly in the other two.
+- transformer_block: the single call never produced a passing rewrite; the tool agent gained in every run (above the 1.03x timing spread), by 16% in two of three.
