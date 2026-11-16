@@ -85,9 +85,11 @@ JAX-level rewrites, compiler IR and profiles as feedback.}
 \todo{Formal statement of the optimization task.}
 
 \begin{equation}
+\begin{gathered}
 \text{speedup} = \frac{t_{\text{median}}(f)}{t_{\text{median}}(g)}
-\quad \text{subject to} \quad
+\quad \text{subject to} \\
 |g(x) - f(x)| \le \text{atol} + \text{rtol}\,|f(x)|
+\end{gathered}
 \end{equation}
 
 \todo{State what counts as a real improvement: a speedup outside the noise band.}
@@ -119,8 +121,22 @@ JAX-level rewrites, compiler IR and profiles as feedback.}
 JSON reply format, how candidate code is loaded, retries and timeouts.}
 
 \subsection{Numerical precision on the GPU}
-\todo{Default L4 matmul precision is low (TF32-like): median relative error
-$2.9\times10^{-4}$ vs $2.4\times10^{-7}$ with \texttt{highest}. All runs use \texttt{highest}.}
+By default XLA computes float32 matrix products on the L4 in a reduced
+precision (TF32). Against a float64 result its median relative error was
+$2.9\times10^{-4}$, compared with $2.4\times10^{-7}$ when JAX is told to use
+the \texttt{highest} precision. Which setting applies changes both the
+reference's latency and the error a rewrite may introduce, so it must be the
+same for reference and candidate.
+
+The single-rewrite suite and the planted programs run with \texttt{highest}
+everywhere. Their relative tolerances are tight ($10^{-5}$ and $10^{-4}$),
+and in our tests at the default precision, correct programs failed checks
+this tight. The realistic kernels with matrix products have a tolerance of
+$10^{-2}$, which reduced precision passes; with their
+references at \texttt{highest}, a candidate could gain speed by asking for
+reduced precision alone (Section~\ref{sec:kernels}). Their final runs
+therefore leave the references at XLA's default precision, and we check every
+winning candidate for code that changes the precision.
 
 % ---------------------------------------------------------------------------
 \section{Experimental Evaluation}
@@ -162,7 +178,8 @@ $5.6\times$, $85\times$ and $75\times$.
 write them, with no planted inefficiency: a matrix product, a softmax, a
 fused linear layer with GELU and layer normalization, causal attention
 (2 sequences, 16 heads, 2048 tokens), and a transformer block. Here the
-headroom is unknown and may be zero. Their tolerance is $10^{-2}$. A sixth
+headroom is unknown and may be zero. Their relative tolerance is $10^{-2}$,
+except $10^{-4}$ for the softmax, which has no matrix product. A sixth
 program, a small GPT, was left out because its reference takes over 300\,s to
 compile.
 
