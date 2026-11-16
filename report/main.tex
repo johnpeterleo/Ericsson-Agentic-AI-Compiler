@@ -124,38 +124,228 @@ $2.9\times10^{-4}$ vs $2.4\times10^{-7}$ with \texttt{highest}. All runs use \te
 
 % ---------------------------------------------------------------------------
 \section{Experimental Evaluation}
-% About 2.5 pages. Setup first, then each result with its noise band.
+\label{sec:evaluation}
+
 \subsection{Setup}
-\todo{Hardware (NVIDIA L4, g2-standard-4), software versions (JAX 0.12.0.1, CUDA 12),
-matmul precision, Gemini model, repeats, seeds.}
+All measurements were made on one NVIDIA L4 GPU (Google Cloud
+\texttt{g2-standard-4}) with JAX 0.12.0.1 and CUDA 12. The code was frozen at
+one commit before the runs, and nothing was changed after seeing results.
+
+A candidate is first checked for correctness on two inputs, one of which the
+agent never sees, and is timed only if it passes. Reference and candidate are
+timed in alternation, and the speedup is the ratio of their median latencies,
+excluding compilation. A program that compiles for more than 60\,s is
+rejected. Every speedup we report for a search method is a re-measurement of
+its final candidate: 50 repeats on a fresh input that was not used during the
+search.
+
+We use four language models: Gemini 3.6 Flash
+through its API, \texttt{gpt-6-luna} and \texttt{gpt-6.1-sol} through the
+Codex command-line tool, and Claude Fable 5.2 through Claude Code. A
+\emph{call} is one request to the model.
 
 \subsection{Benchmarks}
-\todo{Seeded ReLU MLPs: 1--10 hidden layers, widths 32/128/256, 1000 examples in batches of 32.
-Two reference programs: a scan-based version with a planted inefficiency, and a vectorized version
-that is already well written.}
+We use three sets of programs, in order of difficulty.
+
+\emph{Single-rewrite suite.} 13 short programs, each with one known
+algorithmic inefficiency and an expert rewrite that removes it, for example
+a matrix product whose result is only used for its trace. The expert rewrite
+gives the available headroom.
+
+\emph{Planted programs.} Three longer programs (causal self-attention, an
+embedding layer followed by a transform, and a windowed standardization),
+each hiding two or three inefficiencies. The clean version is the expert.
+No single fix gives more than $6.1\times$, while all fixes together give
+$5.6\times$, $85\times$ and $75\times$.
+
+\emph{Realistic kernels.} Five programs written the way a practitioner would
+write them, with no planted inefficiency: a matrix product, a softmax, a
+fused linear layer with GELU and layer normalization, causal attention
+(2 sequences, 16 heads, 2048 tokens), and a transformer block. Here the
+headroom is unknown and may be zero. Their tolerance is $10^{-2}$. A sixth
+program, a small GPT, was left out because its reference takes over 300\,s to
+compile.
 
 \subsection{Measurement noise}
-\todo{Noise floor: identical programs evaluated against each other. Report the 5th--95th percentile band.}
+To learn how large a speedup must be before it counts, we let the evaluator
+compare a program with an identical copy of itself, 90 times for each of two
+MLP programs. The 5th to 95th percentile of the reported speedup was
+$0.992\times$ to $1.016\times$ for one and $0.972\times$ to $1.025\times$
+for the other. We therefore treat any speedup below $1.03\times$ as no
+improvement.
 
-\subsection{Agent results}
+\subsection{Single-rewrite suite}
+Table~\ref{tab:suite} shows the agent with Gemini 3.6 Flash on the suite.
+The first call found the expert's rewrite for all 13 programs: the agent's
+speedup is at least 96\% of the expert's in every case, and the cases above
+the expert are inside the timing spread. Later attempts never clearly
+improved on the first, and one was a numerically wrong rewrite that the
+correctness check rejected. These programs show that a language model
+finds algorithmic rewrites that XLA does not make, but they are too easy to
+tell search methods apart.
+
 \begin{table}[t]
   \centering
-  \caption{Agent speedup over vanilla XLA on the NVIDIA L4. \todo{fill in}}
-  \label{tab:agent}
-  \begin{tabular}{@{}lrrr@{}}
+  \caption{Single-rewrite suite on the L4: speedup over XLA of the expert
+  rewrite and of the agent's first attempt (Gemini 3.6 Flash).}
+  \label{tab:suite}
+  \begin{tabular}{@{}lrr@{}}
     \toprule
-    Reference & Correct candidates & Median speedup & Above noise band \\
+    Program & Expert & Agent \\
     \midrule
-    Scan (planted) & \todo{} & \todo{} & \todo{} \\
-    Vectorized & \todo{} & \todo{} & \todo{} \\
+    \texttt{embed\_tokens} & $54.9\times$ & $57.8\times$ \\
+    \texttt{attention} (suite version) & $34.2\times$ & $34.2\times$ \\
+    \texttt{low\_rank\_plus\_diagonal\_times\_vectors} & $24.2\times$ & $25.4\times$ \\
+    \texttt{scale\_rows\_and\_columns} & $24.1\times$ & $25.3\times$ \\
+    \texttt{matrix\_polynomial\_times\_vector} & $20.6\times$ & $20.7\times$ \\
+    \texttt{matrix\_chain\_times\_vector} & $20.4\times$ & $21.3\times$ \\
+    \texttt{moving\_window\_sums} & $18.0\times$ & $18.1\times$ \\
+    \texttt{kronecker\_product\_times\_vector} & $13.0\times$ & $12.9\times$ \\
+    \texttt{prefix\_sums} & $9.4\times$ & $9.1\times$ \\
+    \texttt{trace\_of\_product} & $8.2\times$ & $8.3\times$ \\
+    \texttt{circulant\_times\_vectors} & $4.1\times$ & $4.1\times$ \\
+    \texttt{evaluate\_polynomial} & $3.2\times$ & $3.1\times$ \\
+    \texttt{matrix\_power} & $2.9\times$ & $2.9\times$ \\
     \bottomrule
   \end{tabular}
 \end{table}
-\todo{Results per architecture (figure), example rewrite, failure cases.}
 
-\subsection{JAX on GPU versus NumPy on CPU}
-\todo{Optional context table. Note that it calls the program once per batch, so it
-mostly measures launch overhead on the GPU.}
+\subsection{Planted programs: comparing search methods}
+On the planted programs we compare five ways of spending a budget of 12
+calls, all with \texttt{gpt-6-luna}:
+\begin{itemize}
+  \item \emph{single}: one call, no feedback;
+  \item \emph{best of $n$}: 12 independent calls, keep the fastest correct candidate;
+  \item \emph{chain}: 12 calls in sequence, each seeing the earlier attempts and their measurements;
+  \item \emph{original chain}: the same with our first prompt, which lets the model stop early;
+  \item \emph{tool agent}: the model chooses its own actions (inspect, time, evaluate, finish).
+\end{itemize}
+Each combination was run three times (Table~\ref{tab:planted}).
+
+\begin{table*}[t]
+  \centering
+  \caption{Planted programs on the L4: re-measured speedup over the reference
+  in each of three runs (\texttt{gpt-6-luna}, at most 12 calls). A dash means
+  that no candidate passed the correctness check. The last row gives the
+  number of calls a run used.}
+  \label{tab:planted}
+  \begin{tabular}{@{}lrccccc@{}}
+    \toprule
+    Program & Expert & Single & Best of $n$ & Chain & Original chain & Tool agent \\
+    \midrule
+    \texttt{causal\_self\_attention} & $5.6\times$ & --, --, -- & 4.95, 5.72, 4.84 & 1.00, 4.77, 4.84 & 5.58, --, -- & 6.59, 4.74, 4.89 \\
+    \texttt{embed\_and\_transform} & $85\times$ & --, --, 1.55 & 94.8, 93.0, 97.3 & 95.1, 94.9, 89.9 & 93.2, 89.7, 94.2 & 90.3, 90.5, 92.4 \\
+    \texttt{local\_standardize} & $75\times$ & 42.8, --, -- & 50.3, 45.8, 70.9 & 89.4, 51.1, 46.4 & 76.1, --, 79.5 & 50.0, --, 71.0 \\
+    \midrule
+    Calls used & & 1 & 12 & 12 & 1--10 & 2--5 (one run 11) \\
+    \bottomrule
+  \end{tabular}
+\end{table*}
+
+\emph{One call is not enough.} The single call produced a correct rewrite in
+2 of 9 runs, and neither came near the expert.
+
+\emph{With more calls, no method clearly wins.} Every multi-call method
+comes within 15\% of the expert or passes it on every program in at least
+one run, and the
+spread between runs of one method is as large as the gaps between methods.
+Best of $n$ is the steadiest: it is the only method with a clear gain in all
+9 runs.
+
+\emph{The tool agent is cheaper.} It reaches the same range with 2 to 5 calls
+instead of 12. The cost is that it sometimes finishes while more calls would
+have helped, and one of its runs ended with no correct candidate.
+
+\emph{Feedback can mislead.} In one chain run the model misread the reference
+in its first attempt and built on that reading for seven attempts
+($1.00\times$). The original chain stopped without a correct candidate in 3
+of 9 runs.
+
+Two tool-agent runs were repeated with the same code and settings because
+the Codex tool returned an empty reply, which the runner treats as the model
+being unavailable; the table shows the repeated runs.
+
+\subsection{Realistic kernels}
+\label{sec:kernels}
+On the realistic kernels we compare the single call with the tool agent.
+
+\emph{A loose tolerance can be exploited.} Our first runs forced full
+float32 precision for matrix products, while the $10^{-2}$ tolerance of
+these programs was chosen to accept the GPU's faster reduced-precision mode
+(TF32). The agent found the gap: its candidates asked for reduced precision
+on their own products and measured $2.06\times$ on the matrix product and
+$2.34\times$ on the fused layer, with no change to the algorithm. This is a
+flaw in the setup, not a result. We therefore reran the kernels with the
+references at XLA's default precision, which already uses the faster mode.
+All numbers below are from that setup, and no winning candidate changes the
+precision.
+
+\emph{Three kernels have nothing to gain.} With \texttt{gpt-6.1-sol} the
+tool agent ended at $1.00\times$ on the matrix product and the fused layer
+and at $1.01\times$ on the softmax, all inside the timing spread. The single
+call was slower than the reference or incorrect on all three. A weaker
+model, \texttt{gpt-6-luna}, was only run in the first setup and found no
+gain there beyond the precision change.
+
+\emph{Causal attention can be improved.} Table~\ref{tab:kernels} shows the
+two kernels that contain causal attention. Every run of the tool agent beat
+XLA, by $1.8\times$ to $3.2\times$ on attention and by $1.13\times$ to
+$1.54\times$ on the transformer block. All winning candidates rest on the
+same idea. The reference computes the full score matrix and then discards
+the half above the diagonal with the causal mask; the rewrites process the
+queries in blocks and compute scores only for the keys up to each block's
+position. XLA cannot make this change, because it follows from what the
+mask means and not from a local rewrite rule. Two different models found it
+independently.
+
+\emph{The tool agent beats the single call here.} On attention the tool
+agent was ahead of the single call in all six paired runs. On the
+transformer block the single call never produced a correct rewrite in three
+runs, while the tool agent gained in all four of its runs.
+
+\begin{table}[t]
+  \centering
+  \caption{The two kernels with causal attention on the L4: re-measured
+  speedup over XLA at default precision, one value per run. A dash means
+  that no candidate passed the correctness check.}
+  \label{tab:kernels}
+  \begin{tabular}{@{}llc@{}}
+    \toprule
+    Model & Method & Speedup \\
+    \midrule
+    \multicolumn{3}{@{}l}{\texttt{attention}} \\
+    \texttt{gpt-6.1-sol} & Single call & 1.59, 1.81, 1.59 \\
+    \texttt{gpt-6.1-sol} & Tool agent & 3.24, 1.96, 1.81 \\
+    Claude Fable 5.2 & Single call & 1.56, 1.38, 1.46 \\
+    Claude Fable 5.2 & Tool agent & 2.13, 2.08, 2.12 \\
+    Claude Fable 5.2 & Claude Code & 2.11, 2.07, 1.51 \\
+    \midrule
+    \multicolumn{3}{@{}l}{\texttt{transformer\_block}} \\
+    \texttt{gpt-6.1-sol} & Single call & --, --, -- \\
+    \texttt{gpt-6.1-sol} & Tool agent & 1.54, 1.16, 1.16 \\
+    Claude Fable 5.2 & Tool agent & 1.13 \\
+    Claude Fable 5.2 & Claude Code & 1.14 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\emph{Comparison with a general coding agent.} As a reference point we gave
+the same task to Claude Code, a general-purpose coding agent, with a shell
+on the machine, our evaluator as a script, the tool agent's instructions and
+47 minutes. It reached the same range as our tool agent with the same model
+(Table~\ref{tab:kernels}) while using 12 to 24 turns and 13 to 37 minutes
+per run. Our tool agent's small, fixed set of actions is therefore enough
+for this task. Two earlier Claude Code runs that shared the machine by
+mistake ($1.25\times$ and $1.36\times$) are left out of the table.
+
+\subsection{Summary of the results}
+One call is enough when a program has a single algorithmic inefficiency.
+When several are combined, more calls are needed, and how the calls are
+organized matters less than having them. On realistic code XLA leaves
+little on the table: three of five kernels could not be improved, and the
+gain on the other two comes from one idea. The numbers for the kernels rest
+on one to three runs per configuration, so they show that a gain exists and
+is repeatable, not how large it is on average.
 
 % ---------------------------------------------------------------------------
 \section{Summary and Discussion}
