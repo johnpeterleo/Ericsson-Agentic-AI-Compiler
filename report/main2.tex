@@ -224,13 +224,12 @@ device, compiles the program, and records the compile time. It then makes
 one warm-up call followed by 20 timed calls, and waits for each call with
 \texttt{block\_until\_ready}. JAX launches GPU work asynchronously, so
 without the wait only the launch would be timed. The profiler reports the
-median, mean, minimum, maximum and standard deviation of the calls, and the
-device. It does not break the time down by kernel.
+median time of the calls. It does not break the time down by kernel.
 
 The full optimized HLO is too long for a prompt. For the transformer block it
 runs to tens of thousands of characters, most of them the bodies of fused
-computations and source locations. The fixed loop shows the first 4000
-characters of the StableHLO and of the optimized HLO. The tool agent gets a
+computations and source locations. The fixed loop shows the beginning
+of the StableHLO and of the optimized HLO. The tool agent gets a
 summary instead, with four parts:
 \begin{itemize}
   \item the operations XLA launches, from the entry computation and the loop
@@ -238,8 +237,8 @@ summary instead, with four parts:
     the library call (for example a cuBLAS matrix product);
   \item XLA's own estimates of FLOPs and bytes accessed;
   \item the floating-point types that occur in the compiled program;
-  \item the first 3000 characters of the launched computations, with
-    metadata removed.
+  \item the beginning of the launched computations, with metadata
+    removed.
 \end{itemize}
 For a candidate, the operation counts are also given as changes against the
 reference, such as \mbox{\texttt{dot 3 -> 1}}. The floating-point types are also
@@ -293,7 +292,7 @@ contains the device, the input shapes, the reference's median latency, the
 truncated StableHLO and optimized HLO, and the reference source. After the
 first attempt, the prompt also lists every earlier attempt with its source,
 its rationale and its outcome. The outcome is either the speedup and both
-latencies, or the failure stage and the message, cut at 1000 characters.
+latencies, or the failure stage and the message.
 The prompt then names the best attempt so far, shows its optimized HLO, and
 tells the model to improve on it and not to repeat a rejected attempt.
 
@@ -342,7 +341,7 @@ budget. There are four actions:
 where the time goes before it spends evaluations, which matters on long
 programs with several slow parts. Every observation ends with a leaderboard
 of the three fastest correct candidates, the source of the best one, and the
-budget left. Each observation is cut at 8000 characters.
+budget left.
 
 A run stops when the model finishes, after 12 turns, after 16 candidate
 evaluations, or after four evaluate turns in a row bring no improvement. With
@@ -362,14 +361,10 @@ turn, and to measure the main parts of its best candidate before finishing.
 All models are reached through one text interface: a call sends a system
 prompt and a message and gets text back. The interface keeps no state, so
 the caller sends the whole conversation each time. Gemini is called through
-Google's API, with a timeout of 120\,s per request. After a rate limit, a
-server error or a network error, the request is retried after 30, 60, 120
-and 240\,s, and a used-up daily quota ends the run. Claude models are called
+Google's API, and a failed request is retried. Claude models are called
 through the Claude Code command-line tool in print mode, with all of its
 tools turned off. OpenAI models are called through the Codex command-line
-tool, in a read-only sandbox, with a medium reasoning effort and a timeout
-of 300\,s. Codex has no system-prompt option, so the system prompt is placed
-first in the message, together with an instruction to answer in text only.
+tool, in a read-only sandbox, with a medium reasoning effort.
 Both command-line tools run in an empty temporary folder without the user's
 settings, so they cannot read our repository. In every case the model only
 returns text. Every candidate is compiled, checked and timed by our
