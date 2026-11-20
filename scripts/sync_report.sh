@@ -39,8 +39,8 @@ fi
 overleaf_trees=$(git log --format=%T "$overleaf_commit")
 shared_tree=""
 for commit in $(git rev-list HEAD -- "$FOLDER"); do
-  for tree in $(git log -1 --format=%B "$commit" | sed -n 's/^Overleaf-tree: //p') \
-              $(git rev-parse "$commit:$FOLDER" 2>/dev/null || true); do
+  for tree in $(git rev-parse "$commit:$FOLDER" 2>/dev/null || true) \
+              $(git log -1 --format=%B "$commit" | sed -n 's/^Overleaf-tree: //p'); do
     if grep -qx "$tree" <<< "$overleaf_trees"; then
       shared_tree=$tree
       break 2
