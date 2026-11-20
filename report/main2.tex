@@ -44,8 +44,9 @@ receives correctness and latency feedback from an evaluator that rejects
 incorrect candidates before timing them. We evaluate on one NVIDIA L4 GPU
 against vanilla XLA, using 13 single-rewrite programs, three longer programs
 with planted inefficiencies, and five realistic kernels. Measurement noise
-is about $\pm3\%$, so only speedups above $1.03\times$ count. A single model
-call found the expert rewrite for all 13 simple programs, but produced a
+is about $\pm3\%$, so only speedups above $1.03\times$ count. Across the 13 simple programs, the best of two or three attempts achieved
+at least 96\% of the expert rewrite's measured speedup in every case.
+A single call produced a
 correct result on only 2 of 9 runs of the planted programs, where multi-call
 search often matched or exceeded the expert. On realistic code, three of
 five kernels showed no gain over XLA. On the two kernels with causal
@@ -473,6 +474,33 @@ the original program. Small differences between their reported speedups
 can therefore reflect variation between runs. One candidate failed the
 numerical correctness check and received no timing score.
 
+\begin{table}[t]
+  \centering
+  \caption{Single-rewrite suite on the L4: speedup over XLA of the expert
+  rewrite and of the agent's best attempt out of two or three (Gemini 3.6
+  Flash).}
+  \label{tab:suite}
+  \begin{tabular}{@{}lrr@{}}
+    \toprule
+    Program & Expert & Agent \\
+    \midrule
+    \texttt{embed\_tokens} & $54.9\times$ & $57.8\times$ \\
+    \texttt{attention} (suite version) & $34.2\times$ & $34.2\times$ \\
+    \texttt{low\_rank\_plus\_diagonal\_times\_vectors} & $24.2\times$ & $25.4\times$ \\
+    \texttt{scale\_rows\_and\_columns} & $24.1\times$ & $25.3\times$ \\
+    \texttt{matrix\_polynomial\_times\_vector} & $20.6\times$ & $20.7\times$ \\
+    \texttt{matrix\_chain\_times\_vector} & $20.4\times$ & $21.3\times$ \\
+    \texttt{moving\_window\_sums} & $18.0\times$ & $18.1\times$ \\
+    \texttt{kronecker\_product\_times\_vector} & $13.0\times$ & $12.9\times$ \\
+    \texttt{prefix\_sums} & $9.4\times$ & $9.1\times$ \\
+    \texttt{trace\_of\_product} & $8.2\times$ & $8.3\times$ \\
+    \texttt{circulant\_times\_vectors} & $4.1\times$ & $4.1\times$ \\
+    \texttt{evaluate\_polynomial} & $3.2\times$ & $3.1\times$ \\
+    \texttt{matrix\_power} & $2.9\times$ & $2.9\times$ \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
 \subsection{Planted programs: comparing search methods}
 
 We ran each method three times on each of the three planted programs
@@ -483,6 +511,29 @@ earlier attempts and their results. We included the original version of
 the chain, whose prompt allowed it to stop early. The tool agent chose
 when to inspect, time, or evaluate code and when to finish, with a limit
 of 12 calls.
+
+\begin{table*}[t]
+  \centering
+  \caption{Planted programs on the L4: re-measured speedup over the reference
+  in each of three runs (\texttt{gpt-6-luna}, at most 12 calls). A dash means
+  that no candidate passed the correctness check. The last rows give the
+  number of calls a run used, the runs with a speedup above $1.03\times$,
+  and the median wall-clock time of a run.}
+  \label{tab:planted}
+  \begin{tabular}{@{}lrccccc@{}}
+    \toprule
+    Program & Expert & Single & Best of $n$ & Chain & Original chain & Tool agent \\
+    \midrule
+    \texttt{causal\_self\_attention} & $5.6\times$ & --, --, -- & 4.95, 5.72, 4.84 & 1.00, 4.77, 4.84 & 5.58, --, -- & 6.59, 4.74, 4.89 \\
+    \texttt{embed\_and\_transform} & $85\times$ & --, --, 1.55 & 94.8, 93.0, 97.3 & 95.1, 94.9, 89.9 & 93.2, 89.7, 94.2 & 90.3, 90.5, 92.4 \\
+    \texttt{local\_standardize} & $75\times$ & 42.8, --, -- & 50.3, 45.8, 70.9 & 89.4, 51.1, 46.4 & 76.1, --, 79.5 & 50.0, --, 71.0 \\
+    \midrule
+    Calls used & & 1 & 12 & 12 & 1--10 & 2--5 (one run 11) \\
+    Runs with a gain & & 2/9 & 9/9 & 8/9 & 6/9 & 8/9 \\
+    Median time per run & & 73\,s & 548\,s & 621\,s & 91\,s & 132\,s \\
+    \bottomrule
+  \end{tabular}
+\end{table*}
 
 Table~\ref{tab:planted} gives the results for all nine runs per method. A single call
 produced a correct rewrite in two of nine runs. Best of
@@ -509,6 +560,7 @@ empty reply, which the runner treated as an unavailable model. The
 reported results use the repeated runs with the same code and settings.
 
 \subsection{Realistic kernels}
+\label{sec:kernels}
 
 The first runs exposed a problem with the precision settings. The
 references used the highest matrix multiplication precision, while the
@@ -517,6 +569,27 @@ winning candidates that explicitly asked for reduced precision.
 \texttt{gpt-6-luna} achieved $2.06\times$ on the matrix product, and
 \texttt{gpt-6.1-sol} achieved $2.34\times$ on the fused layer. Both
 passed the output checks without changing the algorithm.
+
+\begin{table}[t]
+  \centering
+  \caption{The tool agent on two kernels, with the reference at the
+  \texttt{highest} matmul precision and at XLA's default (one run each).
+  The last column says whether the winning candidate asks for reduced
+  precision.}
+  \label{tab:precision}
+  \begin{tabular}{@{}llllc@{}}
+    \toprule
+    Kernel & Model & Reference & Speedup & Reduced \\
+    \midrule
+    Matrix product & \texttt{gpt-6-luna} & \texttt{highest} & $2.06\times$ & yes \\
+    Matrix product & \texttt{gpt-6.1-sol} & \texttt{highest} & $1.00\times$ & no \\
+    Matrix product & \texttt{gpt-6.1-sol} & default & $1.00\times$ & no \\
+    Fused layer & \texttt{gpt-6-luna} & \texttt{highest} & $1.00\times$ & no \\
+    Fused layer & \texttt{gpt-6.1-sol} & \texttt{highest} & $2.34\times$ & yes \\
+    Fused layer & \texttt{gpt-6.1-sol} & default & $1.00\times$ & no \\
+    \bottomrule
+  \end{tabular}
+\end{table}
 
 For the final runs, we used XLA's default matrix multiplication
 precision for the references. With this setting, the
@@ -537,6 +610,34 @@ earlier positions. XLA did not produce this rewrite for the original
 program in our configuration. The same change improved the attention
 part of the transformer block.
 
+\begin{lstlisting}[float=t, language=Python, basicstyle=\scriptsize\ttfamily,
+  label=lst:attention, caption={The fastest attention rewrite
+  ($3.24\times$, \texttt{gpt-6.1-sol}). \texttt{q},
+  \texttt{k} and \texttt{v} have shape (batch, heads, sequence, head width). \newline}]
+def candidate(q, k, v):
+    b, h, s, d = q.shape
+    group = 4
+    qs = q.reshape(b*h//group, group, s, d)
+    ks = k.reshape(b*h//group, group, s, d)
+    vs = v.reshape(b*h//group, group, s, d)
+    def step(args):
+        x, y, w = args
+        out = []
+        for start in range(0, s, 512):
+            end = min(start+512, s)
+            z = jnp.einsum('hqd,hkd->hqk',
+                    x[:, start:end, :], y[:, :end, :]
+                ) * jnp.float32(d**-0.5)
+            mask = (jnp.arange(start, end)[:, None]
+                    >= jnp.arange(end)[None, :])
+            p = jax.nn.softmax(
+                jnp.where(mask, z, -jnp.inf), axis=-1)
+            out.append(jnp.einsum('hqk,hkd->hqd',
+                                  p, w[:, :end, :]))
+        return jnp.concatenate(out, axis=1)
+    return jax.lax.map(step, (qs, ks, vs)).reshape(q.shape)
+\end{lstlisting}
+
 Listing~\ref{lst:attention} shows the fastest attention candidate, generated by
 \texttt{gpt-6.1-sol}. On the fresh input $x''$, it took 3.00~ms,
 compared with 9.72~ms for the reference, a $3.24\times$ speedup. It
@@ -545,6 +646,30 @@ blocks of 512. The four query blocks needed one, two, three, and four
 key blocks respectively. This computes 10 of the 16 possible score
 blocks (62.5\%). The rewrite also used smaller temporary score arrays.
 We did not measure how much each change contributed to the speedup.
+
+\begin{table}[t]
+  \centering
+  \caption{The two kernels with causal attention on the L4: re-measured
+  speedup over XLA at default precision, one value per run. A dash means
+  that no candidate passed the correctness check.}
+  \label{tab:kernels}
+  \begin{tabular}{@{}llc@{}}
+    \toprule
+    Model & Method & Speedup \\
+    \midrule
+    \multicolumn{3}{@{}l}{\texttt{attention}} \\
+    \texttt{gpt-6.1-sol} & Single call & 1.59, 1.81, 1.59 \\
+    \texttt{gpt-6.1-sol} & Tool agent & 3.24, 1.96, 1.81 \\
+    Claude Fable 5.2 & Single call & 1.56, 1.38, 1.46 \\
+    Claude Fable 5.2 & Tool agent & 2.13, 2.08, 2.12 \\
+    \midrule
+    \multicolumn{3}{@{}l}{\texttt{transformer\_block}} \\
+    \texttt{gpt-6.1-sol} & Single call & --, --, -- \\
+    \texttt{gpt-6.1-sol} & Tool agent & 1.54, 1.16, 1.16 \\
+    Claude Fable 5.2 & Tool agent & 1.13 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
 
 Table~\ref{tab:kernels} shows that the tool agent achieved $1.81$--$3.24\times$ on causal
 attention and $1.13$--$1.54\times$ on the transformer block. On
@@ -566,8 +691,9 @@ transformer-block runs across the two model families.
 \subsection{Summary of findings}
 We evaluated a search loop in which a language model inspects JAX/XLA compiler
 output and profiles, proposes a JAX source rewrite, and receives correctness
-and latency feedback. On the 13-program single-rewrite suite, Gemini 3.6 Flash
-found the expert rewrite on its first call for all 13 programs. On the harder
+and latency feedback. On each of the 13 single-rewrite programs, the best correct candidate
+from two or three attempts with Gemini 3.6 Flash achieved at least 96\%
+of the expert rewrite's measured speedup. On the harder
 planted programs, a single call produced a correct candidate in only two of
 nine runs. Multi-call methods more often reached results near or above the
 expert, but no method consistently outperformed the others. The tool agent
