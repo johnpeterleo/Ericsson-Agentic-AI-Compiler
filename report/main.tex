@@ -82,7 +82,7 @@ Our contributions are:
 }
   \item {An evaluator that rejects incorrect candidates before any timing is done, together with a noise-floor check so small timing differences are not counted as real speedups.}
 
-  \item {An evaluation on an NVIDIA L4 against vanilla XLA (the original JAX program compiled with no agent rewrite), on 13 short programs with one known inefficiency each, 3 longer programs with planted inefficiencies, and and five realistic JAX workloads with no planted inefficiency. On the first two sets we also compare to hand-written expert rewrites.}
+  \item {An evaluation on an NVIDIA L4 against vanilla XLA (the original JAX program compiled with no agent rewrite), on 13 short programs with one known inefficiency each, 3 longer programs with planted inefficiencies, and five realistic JAX workloads with no planted inefficiency. On the first two sets we also compare to hand-written expert rewrites.}
 \end{itemize}
 
 % ---------------------------------------------------------------------------
@@ -92,7 +92,7 @@ Our contributions are:
 FlashAttention by Dao et al. \cite{dao2022flashattention} is a good example of manual algorithmic design optimization that brought significant speedups. Standard attention requires materialising the intermediate attention matrix $QK^T$in GPU memory before applying softmax. For long sequences, this matrix becomes large and requires substantial memory access. Data needs to be moved between the GPU's fast on-chip memory (SRAM) and high-bandwidth memory (HBM), and repeatedly reading and writing intermediate results causes slowdowns. FlashAttention addresses this by restructuring the attention computation using tiling, where the inputs are divided into smaller blocks that fit in the GPU's fast on-chip memory (SRAM). This reduces the need to repeatedly read and write intermediate results to high-bandwidth memory (HBM), while preserving the exact attention computation. The authors demonstrated significant speedups, including a 3x speedup on GPT-2 compared to standard attention. This demonstrates how redesigning an algorithm around hardware characteristics can achieve performance improvements beyond simply optimising the execution of the original operations.
 
 \subsection{Machine-learning compilers}
-Jax \cite{jax} is a python Library that is designed for high performance numerical computing and machine learning models. It gives Numpy like interface to computations that run on CPU, GPU or TPU and has built in Just in Time (JIT) compilation via Open XLA \cite{openxla}. XLA is an open source compiler designed for high performance computing and machine learning models through intermediate representations such as StableHLO and by optimizing computations graphs at lower level such as operation fusion when for example For example if a sequence of elementwise operations can be fused into a single kernel.
+JAX \cite{jax} is a Python library that is designed for high performance numerical computing and machine learning models. It gives Numpy like interface to computations that run on CPU, GPU or TPU and has built in Just in Time (JIT) compilation via OpenXLA \cite{openxla}. XLA is an open source compiler designed for high performance computing and machine learning models through intermediate representations such as StableHLO and by optimizing computations graphs at lower level such as operation fusion, for example if a sequence of elementwise operations can be fused into a single kernel.
 
 
 JAX and the XLA compiler are effective at optimising the computations that have been written. However, they cannot change the algorithm itself. For instance, multiplying by a diagonal matrix is still treated as a matrix product unless the programmer has already written it using broadcasting. Similarly, a chain of matrix products may be evaluated in the order it appears, even when a different association would reduce the amount of work. These are the kinds of limitations that our agent tries to address by finding equivalent but more optimised computations. The agent rewrites the JAX program that is fed into it and then lets XLA compile the new version. The lowered program and runtime profile are used as feedback about what the compiler did and did not manage to optimize on its own.
@@ -111,11 +111,11 @@ In our case, the agent does not write device kernels. Instead, it rewrites JAX c
 % - Correctness: |g(x) - f(x)| <= atol + rtol * |f(x)|, with the values used.
 % - Objective: median latency on the target device, excluding compilation.
 % - Baseline: vanilla XLA compilation of f.
-Let (f) be a JAX function that returns a single finite floating-point array, and let (x) be a tuple of array inputs with the shapes and dtypes that (f) expects. The agent should produce a new function (g) such that
+Let \(f\) be a JAX function that returns a single finite floating-point array, and let \(x\) be a tuple of array inputs with the shapes and dtypes that \(f\) expects. The agent should produce a new function \(g\) such that
 
 \[g(x) \approx f(x)\]
 
-within the tolerance
+within the tolerance, for every element,
 
 \[|g(x)-f(x)| \leq atol + rtol|f(x)|\]
 
@@ -125,7 +125,7 @@ and
 
 Here, \(t_{\text{median}}\) is the median execution time of the compiled program on the target device, measured over repeated calls after compilation and warm-up. Compilation time and the first call are therefore excluded.
 
-The tolerances are chosen per program. By default, we use a relative tolerance of \(10^{-5}\) and an absolute tolerance of \(10^{-6}\). For programs mainly consisting of matrix products, we use a looser relative tolerance of \(10^{-2}\), since float32 operations on GPUs may use reduced precision. When a separate test input \(x'\) with the same shapes is available, \(g\) must also produce results within the required tolerance on that input. This helps ensure that the rewritten function works beyond just the original input values.
+The tolerances are chosen per program. By default, we use a relative tolerance of \(10^{-5}\) and an absolute tolerance of \(10^{-6}\). The planted programs and the softmax use a relative tolerance of \(10^{-4}\). For programs mainly consisting of matrix products, we use a looser relative tolerance of \(10^{-2}\), since float32 operations on GPUs may use reduced precision. On a separate test input \(x'\) with the same shapes, \(g\) must also produce results within the required tolerance on that input. This helps ensure that the rewritten function works beyond just the original input values.
 
 We measure performance using the speedup relative to the original program compiled with vanilla XLA:
 
@@ -133,7 +133,7 @@ We measure performance using the speedup relative to the original program compil
 {t_{\text{median}}(g)}.
 \]
 
-Since the agent may try several rewrites, we report the fastest correct candidate and the attempt at which it was found.
+Since the agent may try several rewrites, the three fastest correct candidates are timed again on a third input \(x''\), and we report the best of these (Section~\ref{sec:evaluation}).
 
 
 % ---------------------------------------------------------------------------
@@ -397,14 +397,18 @@ winning candidate for code that changes the precision.
 \subsection{Setup}
 All measurements were made on one NVIDIA L4 GPU (Google Cloud
 \texttt{g2-standard-4}) with JAX 0.12.0.1 and CUDA 12. The code was frozen at
-one commit before the runs, and nothing was changed after seeing results.
+one commit before the runs, and nothing was changed after seeing results,
+except that the timeout for Claude was raised from 120\,s to 900\,s so that
+long replies were not cut off. The single-rewrite suite was run earlier, with
+the fixed loop, 20 timing rounds and no final re-measurement.
 
 A candidate is first checked for correctness on two inputs, one of which the
 agent never sees, and is timed only if it passes. Reference and candidate are
 timed in alternation, and the speedup is the ratio of their median latencies,
 excluding compilation. A program that compiles for more than 60\,s is
-rejected. Every speedup we report for a search method is a re-measurement of
-its final candidate: 50 repeats on a fresh input that was not used during the
+rejected. Every speedup we report for a search method in Tables~\ref{tab:planted}
+and~\ref{tab:kernels} is the best re-measurement of its three fastest
+candidates: 50 repeats on a fresh input that was not used during the
 search.
 
 We use four language models: Gemini 3.6 Flash
